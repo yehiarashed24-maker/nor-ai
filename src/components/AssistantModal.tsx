@@ -4,67 +4,14 @@ import { useLanguage } from '../context/LanguageContext';
 
 const memoryKey = 'nor_ai_memory';
 
-// Clean WAV encoder that produces valid 16kHz mono PCM WAV
-const encodeWAV = (samples: Float32Array, sampleRate: number): Blob => {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  const writeString = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, 1, true); // Mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // Byte rate
-  view.setUint16(32, 2, true); // Block align
-  view.setUint16(34, 16, true); // 16-bit
-  writeString(36, 'data');
-  view.setUint32(40, samples.length * 2, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-
-  return new Blob([view], { type: 'audio/wav' });
-};
-
-// Downsamples from AudioContext rate (e.g. 48kHz / 44.1kHz) to 16kHz
-const downsampleTo16k = (buffer: Float32Array, inputRate: number): Float32Array => {
-  if (inputRate === 16000) return buffer;
-  const ratio = inputRate / 16000;
-  const newLength = Math.round(buffer.length / ratio);
-  const result = new Float32Array(newLength);
-  let offsetResult = 0;
-  let offsetBuffer = 0;
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-    let accum = 0, count = 0;
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-      accum += buffer[i];
-      count++;
-    }
-    result[offsetResult] = count > 0 ? accum / count : 0;
-    offsetResult++;
-    offsetBuffer = nextOffsetBuffer;
-  }
-  return result;
-};
-
-const selectVoice = (language: 'ar' | 'en') => {
+const selectVoice = (language: 'ar' | 'en'): SpeechSynthesisVoice | null => {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
+  if (!voices || !voices.length) return null;
+
   if (language === 'ar') {
-    // Look for Arabic voices. On iOS, Maged, Tarik, Laila are ar-SA or ar-001.
     const arVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('ar'));
-    const preferred = ['Maged', 'Majed', 'Tarik', 'Laila', 'Mariam', 'Google', 'Hamed'];
+    const preferred = ['Google', 'Maged', 'Majed', 'Tarik', 'Laila', 'Mariam', 'Hamed'];
     for (const name of preferred) {
       const match = arVoices.find((v) => v.name.includes(name));
       if (match) return match;
@@ -72,13 +19,20 @@ const selectVoice = (language: 'ar' | 'en') => {
     return arVoices[0] || null;
   } else {
     const enVoices = voices.filter((v) => v.lang.toLowerCase().startsWith('en'));
-    const preferred = ['Samantha', 'Ava', 'Google US English', 'Aria', 'Siri'];
+    const preferred = ['Samantha', 'Google', 'Ava', 'Aria', 'Siri'];
     for (const name of preferred) {
       const match = enVoices.find((v) => v.name.includes(name));
       if (match) return match;
     }
     return enVoices[0] || null;
   }
+};
+
+const getRecorderOptions = (): MediaRecorderOptions | undefined => {
+  if (typeof MediaRecorder === 'undefined') return undefined;
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+  const mimeType = types.find((type) => MediaRecorder.isTypeSupported(type));
+  return mimeType ? { mimeType, audioBitsPerSecond: 64000 } : undefined;
 };
 
 const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
@@ -91,21 +45,19 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
 const labels = {
   ar: {
     title: 'مساعد نور', close: 'إغلاق', camera: 'تشغيل المساعد', stopCamera: 'إيقاف المساعد',
-    ask: 'اسأل نور عما أمامك…', listen: 'اضغط للتحدث', stop: 'إنهاء السؤال', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
-    starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اضغط على المايك واسأل عن اللي حواليك.',
-    listening: 'أنا أسمعك… تحدث الآن', heard: 'جاري تجهيز السؤال…', thinking: 'أحلل الصورة والسؤال…', readyAgain: 'جاهز لسؤالك التالي.',
-    cameraError: 'تعذر تشغيل الكاميرا أو المايك. يرجى السماح بالصلاحيات.',
+    ask: 'اسأل نور عما أمامك…', listen: 'ابدأ الاستماع', stop: 'إيقاف الاستماع', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
+    starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اسألني عن اللي حواليك.',
+    listening: 'أنا أسمعك… تحدث الآن', heard: 'سمعتك. أجهز سؤالك…', thinking: 'أحلل الصورة والسؤال…', readyAgain: 'جاهز لسؤالك التالي.',
+    cameraError: 'تعذر تشغيل الكاميرا أو المايك. اسمح بالصلاحيات ثم اضغط تشغيل المساعد.',
     apiError: 'تعذر تحليل الصورة. حاول مرة أخرى.',
-    soundTip: 'تأكد من إلغاء وضع الصامت (Silent Mode) في الهاتف لسماع الرد.',
   },
   en: {
     title: 'NOR Assistant', close: 'Close', camera: 'Start assistant', stopCamera: 'Stop assistant',
-    ask: 'Ask NOR about what is in front of you…', listen: 'Tap to speak', stop: 'Finish question', send: 'Send', replay: 'Read answer aloud',
-    starting: 'Preparing camera and microphone…', ready: 'Camera ready. Tap the mic and ask about your surroundings.',
-    listening: 'Listening… speak now', heard: 'Preparing your question…', thinking: 'Analyzing image and question…', readyAgain: 'Ready for your next question.',
-    cameraError: 'Could not access camera or microphone. Please allow permissions.',
-    apiError: 'Could not analyze. Please try again.',
-    soundTip: 'Make sure your phone is not on Silent Mode to hear the voice.',
+    ask: 'Ask NOR about what is in front of you…', listen: 'Start listening', stop: 'Stop listening', send: 'Send', replay: 'Read answer aloud',
+    starting: 'Preparing the camera and microphone…', ready: 'Camera ready. Ask me about your surroundings.',
+    listening: 'I am listening… speak now', heard: 'Got it. Preparing your question…', thinking: 'Analyzing the image and question…', readyAgain: 'Ready for your next question.',
+    cameraError: 'Could not start the camera or microphone. Allow access, then select Start assistant.',
+    apiError: 'The image could not be analyzed. Please try again.',
   },
 };
 
@@ -114,39 +66,105 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const text = labels[lang];
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-  const recordedSamplesRef = useRef<Float32Array[]>([]);
-  const isRecordingRef = useRef(false);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadFrameRef = useRef<number | null>(null);
   const activeRef = useRef(false);
+  const listeningRef = useRef(false);
   const loadingRef = useRef(false);
+  const speechDetectedRef = useRef(false);
+  const finalizingRef = useRef(false);
+
+  // Critical fix for MP4 / WebM: keep chunk 0 (container header) permanently
+  const headerChunkRef = useRef<Blob | null>(null);
+  const preRollRef = useRef<Blob[]>([]);
+  const speechChunksRef = useRef<Blob[]>([]);
+
+  const voiceStartedAtRef = useRef(0);
+  const silenceStartedAtRef = useRef(0);
+  const loudFramesRef = useRef(0);
+  const noiseFloorRef = useRef(0.012);
+  const calibrateUntilRef = useRef(0);
   const speechTokenRef = useRef(0);
   const speechFallbackRef = useRef<number | null>(null);
-  const silenceTimerRef = useRef<number | null>(null);
-  const lastSoundTimeRef = useRef(0);
+  const startListeningRef = useRef<() => void>(() => {});
+  const processVoiceRef = useRef<(blob: Blob) => void>(() => {});
 
   const [cameraOn, setCameraOn] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [listening, setListening] = useState(false);
   const [loading, setLoading] = useState(false);
   const [question, setQuestion] = useState('');
   const [status, setStatus] = useState(text.starting);
   const [answer, setAnswer] = useState('');
 
+  const stopListening = () => {
+    listeningRef.current = false;
+    speechDetectedRef.current = false;
+    finalizingRef.current = false;
+    preRollRef.current = [];
+    speechChunksRef.current = [];
+    loudFramesRef.current = 0;
+    setListening(false);
+  };
+
+  const startListening = () => {
+    if (!activeRef.current || loadingRef.current || !streamRef.current) return;
+    
+    // Resume audio context if suspended (common on mobile)
+    if (audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
+
+    listeningRef.current = true;
+    speechDetectedRef.current = false;
+    finalizingRef.current = false;
+    preRollRef.current = [];
+    speechChunksRef.current = [];
+    voiceStartedAtRef.current = 0;
+    silenceStartedAtRef.current = 0;
+    loudFramesRef.current = 0;
+    // Calibrate background noise for 1200ms on mobile
+    calibrateUntilRef.current = performance.now() + 1200;
+    setListening(true);
+    setStatus(text.listening);
+  };
+  useEffect(() => { startListeningRef.current = startListening; });
+
+  const toggleListening = () => {
+    if (audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
+    if (listening) {
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        speechDetectedRef.current = true;
+        finalizingRef.current = true;
+        listeningRef.current = false;
+        setListening(false);
+        setStatus(text.heard);
+        try { recorderRef.current.requestData(); } catch {}
+        return;
+      }
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
   const stopMedia = () => {
-    isRecordingRef.current = false;
-    setRecording(false);
-    if (silenceTimerRef.current !== null) {
-      window.clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
+    stopListening();
+    if (vadFrameRef.current !== null) {
+      window.cancelAnimationFrame(vadFrameRef.current);
+      vadFrameRef.current = null;
     }
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
+    if (recorderRef.current?.state !== 'inactive') {
+      try { recorderRef.current?.stop(); } catch {}
     }
-    if (audioContextRef.current) {
-      void audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    recorderRef.current = null;
+    headerChunkRef.current = null;
+    try { void audioContextRef.current?.close(); } catch {}
+    audioContextRef.current = null;
+    analyserRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -154,13 +172,22 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   };
 
   const speak = (value: string, onFinished?: () => void) => {
+    stopListening();
+    const token = ++speechTokenRef.current;
+    if (speechFallbackRef.current !== null) {
+      window.clearTimeout(speechFallbackRef.current);
+      speechFallbackRef.current = null;
+    }
+
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       onFinished?.();
       return;
     }
-    const token = ++speechTokenRef.current;
-    if (speechFallbackRef.current !== null) window.clearTimeout(speechFallbackRef.current);
-    window.speechSynthesis.cancel();
+
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume?.();
+    } catch {}
 
     const utterance = new SpeechSynthesisUtterance(value);
     const voice = selectVoice(lang);
@@ -168,7 +195,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       utterance.voice = voice;
       utterance.lang = voice.lang;
     } else {
-      // iOS Safari has built-in voice for ar-SA (not ar-EG)
+      // ar-SA works on both iOS and Android universally for Arabic
       utterance.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
     }
     utterance.rate = lang === 'ar' ? 0.92 : 0.95;
@@ -184,7 +211,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
     utterance.onend = finish;
     utterance.onerror = (e) => {
-      console.warn('TTS error:', e);
+      console.warn('TTS on error:', e);
       finish();
     };
 
@@ -195,7 +222,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     }
 
     const estimatedDuration = Math.min(16000, Math.max(2500, value.length * (lang === 'ar' ? 85 : 65)));
-    speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1200);
+    speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1000);
   };
 
   const captureFrame = () => {
@@ -209,20 +236,19 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     return canvas.toDataURL('image/jpeg', 0.82);
   };
 
-  const sendRequest = async ({ typedQuestion, audioBlob }: { typedQuestion?: string; audioBlob?: Blob }) => {
+  const sendRequest = async ({ typedQuestion, audio }: { typedQuestion?: string; audio?: string }) => {
     const image = captureFrame();
-    if (!image || loadingRef.current) return;
+    if (!image || loadingRef.current) {
+      startListeningRef.current();
+      return;
+    }
+    stopListening();
     loadingRef.current = true;
     setLoading(true);
     setAnswer('');
     setStatus(text.thinking);
 
     try {
-      let audio: string | undefined;
-      if (audioBlob) {
-        audio = await blobToDataUrl(audioBlob);
-      }
-
       const saved = JSON.parse(localStorage.getItem(memoryKey) || '[]');
       const memories = Array.isArray(saved) ? saved : [];
       const response = await fetch('/api/assist', {
@@ -242,130 +268,148 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
       loadingRef.current = false;
       setLoading(false);
-      setStatus(text.readyAgain);
-      speak(data.answer);
+      speak(data.answer, () => {
+        if (!activeRef.current) return;
+        setStatus(text.readyAgain);
+        window.setTimeout(() => startListeningRef.current(), 350);
+      });
     } catch (err: any) {
       console.error('Request failed:', err);
       loadingRef.current = false;
       setLoading(false);
       setStatus(text.apiError);
-      speak(text.apiError);
+      speak(text.apiError, () => {
+        if (!activeRef.current) return;
+        window.setTimeout(() => startListeningRef.current(), 700);
+      });
     }
   };
 
-  const stopRecordingAndSend = () => {
-    if (!isRecordingRef.current) return;
-    isRecordingRef.current = false;
-    setRecording(false);
-    if (silenceTimerRef.current !== null) {
-      window.clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
-    const chunks = recordedSamplesRef.current;
-    recordedSamplesRef.current = [];
-    const totalSamples = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-
-    if (totalSamples < 4000) {
-      // Too short (< 0.25s)
-      setStatus(text.ready);
+  const processVoice = async (blob: Blob) => {
+    if (blob.size < 600) {
+      startListeningRef.current();
       return;
     }
-
-    const merged = new Float32Array(totalSamples);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    const sampleRate = audioContextRef.current?.sampleRate || 44100;
-    const downsampled = downsampleTo16k(merged, sampleRate);
-    const wavBlob = encodeWAV(downsampled, 16000);
-
     setStatus(text.heard);
-    void sendRequest({ audioBlob: wavBlob });
-  };
-
-  const startRecording = () => {
-    if (loadingRef.current || !streamRef.current) return;
-
-    // Ensure AudioContext is running
-    if (audioContextRef.current?.state === 'suspended') {
-      void audioContextRef.current.resume();
-    }
-
-    // Unlock speech synthesis on user interaction
     try {
-      const u = new SpeechSynthesisUtterance(' ');
-      u.volume = 0.01;
-      window.speechSynthesis.speak(u);
-    } catch {}
+      const audio = await blobToDataUrl(blob);
+      await sendRequest({ audio });
+    } catch {
+      setStatus(text.apiError);
+      startListeningRef.current();
+    }
+  };
+  useEffect(() => { processVoiceRef.current = (blob) => void processVoice(blob); });
 
-    recordedSamplesRef.current = [];
-    lastSoundTimeRef.current = performance.now();
-    isRecordingRef.current = true;
-    setRecording(true);
-    setStatus(text.listening);
+  const setupAudioCapture = (stream: MediaStream) => {
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus(text.cameraError);
+      return;
+    }
+    const audioTrack = stream.getAudioTracks()[0];
+    if (!audioTrack) return;
 
-    // Auto-stop after 10 seconds max if user doesn't stop
-    silenceTimerRef.current = window.setTimeout(() => {
-      if (isRecordingRef.current) {
-        stopRecordingAndSend();
+    const audioStream = new MediaStream([audioTrack]);
+    const options = getRecorderOptions();
+    const recorder = new MediaRecorder(audioStream, options);
+    recorderRef.current = recorder;
+    headerChunkRef.current = null;
+
+    recorder.ondataavailable = (event) => {
+      if (!event.data || !event.data.size) return;
+
+      // Ensure we keep the first chunk as the container header (ftyp/moov for MP4, EBML for WebM)
+      if (!headerChunkRef.current) {
+        headerChunkRef.current = event.data;
       }
-    }, 10000);
-  };
 
-  const toggleListening = () => {
-    if (recording) {
-      stopRecordingAndSend();
-    } else {
-      startRecording();
-    }
-  };
+      if (speechDetectedRef.current) {
+        speechChunksRef.current.push(event.data);
+      } else if (listeningRef.current) {
+        preRollRef.current = [...preRollRef.current.slice(-3), event.data];
+      }
 
-  const setupAudioEngine = (stream: MediaStream) => {
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const audioContext = new AudioCtx();
-      audioContextRef.current = audioContext;
+      if (finalizingRef.current) {
+        finalizingRef.current = false;
+        const middleChunks = speechChunksRef.current.length > 0 ? speechChunksRef.current : preRollRef.current;
+        
+        // Assemble valid file: [header, ...audioChunks]
+        const allChunks = headerChunkRef.current && !middleChunks.includes(headerChunkRef.current)
+          ? [headerChunkRef.current, ...middleChunks]
+          : middleChunks;
 
-      const audioTrack = stream.getAudioTracks()[0];
-      if (!audioTrack) return;
-      const audioStream = new MediaStream([audioTrack]);
-      const source = audioContext.createMediaStreamSource(audioStream);
+        const type = recorder.mimeType || event.data.type || 'audio/webm';
+        speechChunksRef.current = [];
+        preRollRef.current = [];
+        processVoiceRef.current(new Blob(allChunks, { type }));
+      }
+    };
 
-      // 4096 buffer gives ~92ms per process callback
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      scriptProcessorRef.current = processor;
+    recorder.start(250);
 
-      processor.onaudioprocess = (e) => {
-        if (!isRecordingRef.current) return;
-        const inputData = e.inputBuffer.getChannelData(0);
-        recordedSamplesRef.current.push(new Float32Array(inputData));
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const audioContext = new AudioCtx();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.2;
+    audioContext.createMediaStreamSource(audioStream).connect(analyser);
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
 
-        // Simple silence detection: check energy
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
-        }
-        const rms = Math.sqrt(sum / inputData.length);
+    // Resume immediately if possible
+    void audioContext.resume();
+
+    const samples = new Float32Array(analyser.fftSize);
+
+    const monitor = () => {
+      if (!activeRef.current || analyserRef.current !== analyser) return;
+
+      if (listeningRef.current && !loadingRef.current && !finalizingRef.current) {
+        analyser.getFloatTimeDomainData(samples);
+        let energy = 0;
+        for (const sample of samples) energy += sample * sample;
+        const level = Math.sqrt(energy / samples.length);
         const now = performance.now();
 
-        if (rms > 0.02) {
-          lastSoundTimeRef.current = now;
-        } else if (now - lastSoundTimeRef.current > 1600 && recordedSamplesRef.current.length > 8) {
-          // After 1.6s of silence and at least ~0.7s of audio, auto finish
-          stopRecordingAndSend();
+        // Calibrate background noise
+        if (now < calibrateUntilRef.current && !speechDetectedRef.current) {
+          noiseFloorRef.current = Math.max(0.005, noiseFloorRef.current * 0.85 + level * 0.15);
         }
-      };
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-    } catch (e) {
-      console.warn('AudioEngine setup notice:', e);
-    }
+        // Resilient mobile thresholds to avoid false triggers
+        const speechThreshold = Math.max(0.032, noiseFloorRef.current * 2.8);
+        const silenceThreshold = Math.max(0.018, noiseFloorRef.current * 1.7);
+
+        if (!speechDetectedRef.current) {
+          loudFramesRef.current = level > speechThreshold ? loudFramesRef.current + 1 : 0;
+          if (now >= calibrateUntilRef.current && loudFramesRef.current >= 4) {
+            speechDetectedRef.current = true;
+            speechChunksRef.current = [...preRollRef.current];
+            preRollRef.current = [];
+            voiceStartedAtRef.current = now;
+            silenceStartedAtRef.current = 0;
+            setStatus(text.listening);
+          }
+        } else if (level < silenceThreshold) {
+          if (!silenceStartedAtRef.current) silenceStartedAtRef.current = now;
+          const spokeLongEnough = now - voiceStartedAtRef.current > 450;
+          if (spokeLongEnough && now - silenceStartedAtRef.current > 900) {
+            listeningRef.current = false;
+            setListening(false);
+            finalizingRef.current = true;
+            setStatus(text.heard);
+            try { recorder.requestData(); } catch {}
+          }
+        } else {
+          silenceStartedAtRef.current = 0;
+        }
+      }
+
+      vadFrameRef.current = window.requestAnimationFrame(monitor);
+    };
+
+    vadFrameRef.current = window.requestAnimationFrame(monitor);
   };
 
   const startAssistant = async () => {
@@ -374,7 +418,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       setStatus(text.starting);
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setStatus(text.cameraError + ' (Secure HTTPS required)');
+        setStatus(text.cameraError + ' (HTTPS required)');
         return;
       }
 
@@ -399,33 +443,48 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         videoRef.current.play().catch((e) => console.warn('Video play blocked:', e));
       }
 
-      setupAudioEngine(stream);
+      try {
+        setupAudioCapture(stream);
+      } catch (audioErr) {
+        console.warn('Audio setup notice:', audioErr);
+      }
+
       setCameraOn(true);
       setStatus(text.ready);
 
-      // Announce readiness aloud in Arabic/English
-      speak(text.ready);
+      // Speak greeting and immediately start listening hands-free
+      speak(text.ready, () => startListeningRef.current());
     } catch (err: any) {
-      console.error('Camera/mic access error:', err);
+      console.error('Assistant start error:', err);
       setStatus(text.cameraError + (err?.message ? ` (${err.message})` : ''));
+      try { speak(text.cameraError); } catch {}
     }
   };
 
   useEffect(() => {
-    // Unlock iOS Safari speech synthesis on user interaction
-    const unlockSpeech = () => {
-      if (speechTokenRef.current > 0) return;
-      try {
-        const utterance = new SpeechSynthesisUtterance(' ');
-        utterance.volume = 0.01;
-        window.speechSynthesis.speak(utterance);
-        speechTokenRef.current = 1;
-      } catch {}
-      window.removeEventListener('touchstart', unlockSpeech);
-      window.removeEventListener('click', unlockSpeech);
+    // Unlock iOS Safari / Chrome audio on user gesture
+    const unlockAudioAndSpeech = () => {
+      if (audioContextRef.current?.state === 'suspended') {
+        void audioContextRef.current.resume();
+      }
+      if (speechTokenRef.current === 0) {
+        try {
+          const utterance = new SpeechSynthesisUtterance(' ');
+          utterance.volume = 0.01;
+          window.speechSynthesis.speak(utterance);
+          speechTokenRef.current = 1;
+        } catch {}
+      }
     };
-    window.addEventListener('touchstart', unlockSpeech, { once: true });
-    window.addEventListener('click', unlockSpeech, { once: true });
+    window.addEventListener('touchstart', unlockAudioAndSpeech, { passive: true });
+    window.addEventListener('click', unlockAudioAndSpeech, { passive: true });
+
+    // Cache voices when loaded
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        selectVoice(lang);
+      };
+    }
 
     activeRef.current = open;
     if (open) {
@@ -440,8 +499,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
     return () => {
       activeRef.current = false;
-      window.removeEventListener('touchstart', unlockSpeech);
-      window.removeEventListener('click', unlockSpeech);
+      window.removeEventListener('touchstart', unlockAudioAndSpeech);
+      window.removeEventListener('click', unlockAudioAndSpeech);
     };
   }, [open, lang]);
 
@@ -519,23 +578,23 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
           {/* Assistant status and answer */}
           <div aria-live="polite" className="min-h-20 flex-none py-4 sm:min-h-28 sm:py-6">
-            {answer ? (
+            {answer && (
               <div className="rounded-2xl border border-white/15 bg-white/5 p-4 backdrop-blur-sm">
                 <p className="text-base font-normal leading-relaxed text-white sm:text-xl">{answer}</p>
                 <button
                   type="button"
-                  onClick={() => speak(answer)}
+                  onClick={() => speak(answer, () => startListeningRef.current())}
                   className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs text-white/90 transition hover:bg-white hover:text-black cursor-pointer"
                 >
                   <Volume2 size={14} />
                   <span>{text.replay}</span>
                 </button>
               </div>
-            ) : null}
+            )}
 
             {status && (
               <div className="mt-2 flex items-center gap-2 text-sm text-white/75">
-                {recording && (
+                {listening && (
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500"></span>
@@ -544,11 +603,9 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
                 <p>{status}</p>
               </div>
             )}
-
-            <p className="mt-2 text-[11px] text-white/40">{text.soundTip}</p>
           </div>
 
-          {/* Controls: Input + Big Mic button */}
+          {/* Controls: Input + Mic Toggle */}
           <div className="mt-auto flex flex-none items-center gap-2 rounded-full border border-white/20 bg-white/5 p-2 ps-4 backdrop-blur-md">
             <input
               value={question}
@@ -565,14 +622,14 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
               type="button"
               onClick={toggleListening}
               disabled={loading || !cameraOn}
-              aria-label={recording ? text.stop : text.listen}
+              aria-label={listening ? text.stop : text.listen}
               className={`relative rounded-full p-3.5 transition-all duration-300 cursor-pointer disabled:opacity-30 ${
-                recording
+                listening
                   ? 'bg-red-500 text-white shadow-lg shadow-red-500/50 scale-105 animate-pulse'
                   : 'bg-white/10 text-white hover:bg-white hover:text-black'
               }`}
             >
-              {recording ? <MicOff size={22} /> : <Mic size={22} />}
+              {listening ? <MicOff size={22} /> : <Mic size={22} />}
             </button>
 
             {/* Send Typed Question */}

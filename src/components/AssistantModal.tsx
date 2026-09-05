@@ -24,6 +24,15 @@ declare global {
 
 const memoryKey = 'nor_ai_memory';
 
+const normalizeArabic = (value: string) => value
+  .toLowerCase()
+  .replace(/[أإآ]/g, 'ا')
+  .replace(/ى/g, 'ي')
+  .replace(/[ًٌٍَُِّْـ]/g, '')
+  .replace(/[^\u0600-\u06ff\s]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
 const selectVoice = (language: 'ar' | 'en') => {
   const voices = window.speechSynthesis.getVoices();
   const locale = language === 'ar' ? 'ar' : 'en';
@@ -45,6 +54,7 @@ const labels = {
     ask: 'اسأل نور عما أمامك…', listen: 'ابدأ التحدث', stop: 'إيقاف الاستماع', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
     starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اسألني عن اللي حواليك.',
     listening: 'أنا أسمعك…', thinking: 'أحلل الصورة…', readyAgain: 'جاهز لسؤالك التالي.',
+    wakeHint: 'نور يتكلم. قل «أنا هسأل يا نور» لإيقافه.',
     cameraError: 'تعذر تشغيل الكاميرا. اسمح للموقع باستخدامها ثم اضغط تشغيل الكاميرا.',
     apiError: 'تعذر تحليل الصورة. حاول مرة أخرى بعد لحظة.',
     noSpeech: 'المتصفح لا يدعم التعرف الصوتي. يمكنك كتابة السؤال وإرساله.',
@@ -54,6 +64,7 @@ const labels = {
     ask: 'Ask NOR about what is in front of you…', listen: 'Start speaking', stop: 'Stop listening', send: 'Send', replay: 'Read answer aloud',
     starting: 'Preparing the camera and microphone…', ready: 'Camera ready. Ask me about your surroundings.',
     listening: 'I am listening…', thinking: 'Analyzing the image…', readyAgain: 'Ready for your next question.',
+    wakeHint: 'NOR is speaking. Say “أنا هسأل يا نور” to interrupt.',
     cameraError: 'Could not start the camera. Allow access, then select Start camera.',
     apiError: 'The image could not be analyzed. Please try again in a moment.',
     noSpeech: 'Voice recognition is unavailable in this browser. You can type and send your question.',
@@ -66,14 +77,9 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const voiceActivityFrameRef = useRef<number | null>(null);
-  const speakingRef = useRef(false);
+  const wakeRecognitionRef = useRef<SpeechRecognition | null>(null);
+  const wakeRestartTimerRef = useRef<number | null>(null);
   const speechTokenRef = useRef(0);
-  const interruptAfterRef = useRef(0);
-  const noiseFloorRef = useRef(0.012);
-  const loudFramesRef = useRef(0);
   const activeRef = useRef(false);
   const loadingRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
@@ -97,14 +103,57 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     setListening(false);
   };
 
-  const stopCamera = () => {
-    if (voiceActivityFrameRef.current !== null) {
-      window.cancelAnimationFrame(voiceActivityFrameRef.current);
-      voiceActivityFrameRef.current = null;
+  const stopWakeWordListening = () => {
+    if (wakeRestartTimerRef.current !== null) window.clearTimeout(wakeRestartTimerRef.current);
+    wakeRestartTimerRef.current = null;
+    const recognition = wakeRecognitionRef.current;
+    wakeRecognitionRef.current = null;
+    recognition?.stop();
+  };
+
+  const startWakeWordListening = (token: number) => {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition || !activeRef.current || token !== speechTokenRef.current) return;
+    stopWakeWordListening();
+    const recognition = new Recognition();
+    let interrupted = false;
+    recognition.lang = 'ar-EG';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = normalizeArabic(event.results[0]?.[0]?.transcript ?? '');
+      const isWakePhrase = transcript.includes('انا هسال يا نور') || transcript.includes('هسال يا نور');
+      if (!isWakePhrase) return;
+      interrupted = true;
+      wakeRecognitionRef.current = null;
+      speechTokenRef.current += 1;
+      window.speechSynthesis.cancel();
+      setStatus(text.listening);
+      restartTimerRef.current = window.setTimeout(() => startListeningRef.current(), 150);
+    };
+    recognition.onend = () => {
+      const wasCurrent = wakeRecognitionRef.current === recognition;
+      if (wasCurrent) wakeRecognitionRef.current = null;
+      if (wasCurrent && !interrupted && activeRef.current && token === speechTokenRef.current) {
+        wakeRestartTimerRef.current = window.setTimeout(() => startWakeWordListening(token), 250);
+      }
+    };
+    recognition.onerror = () => {
+      const wasCurrent = wakeRecognitionRef.current === recognition;
+      if (wasCurrent) wakeRecognitionRef.current = null;
+      if (wasCurrent && activeRef.current && token === speechTokenRef.current) {
+        wakeRestartTimerRef.current = window.setTimeout(() => startWakeWordListening(token), 600);
+      }
+    };
+    wakeRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      wakeRecognitionRef.current = null;
     }
-    void audioContextRef.current?.close();
-    audioContextRef.current = null;
-    analyserRef.current = null;
+  };
+
+  const stopCamera = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -113,10 +162,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
   const speak = (value: string, onFinished?: () => void) => {
     stopListening();
+    stopWakeWordListening();
     const token = ++speechTokenRef.current;
-    speakingRef.current = true;
-    interruptAfterRef.current = performance.now() + 650;
-    loudFramesRef.current = 0;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(value);
     utterance.lang = lang === 'ar' ? 'ar-EG' : 'en-US';
@@ -125,55 +172,13 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     utterance.pitch = 1;
     const finish = () => {
       if (token !== speechTokenRef.current) return;
-      speakingRef.current = false;
+      stopWakeWordListening();
       onFinished?.();
     };
     utterance.onend = finish;
     utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
-  };
-
-  const startVoiceActivityDetection = (stream: MediaStream) => {
-    const audioTrack = stream.getAudioTracks()[0];
-    if (!audioTrack) return;
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.25;
-    audioContext.createMediaStreamSource(new MediaStream([audioTrack])).connect(analyser);
-    audioContextRef.current = audioContext;
-    analyserRef.current = analyser;
-    void audioContext.resume();
-    const samples = new Float32Array(analyser.fftSize);
-
-    const monitor = () => {
-      if (!activeRef.current || analyserRef.current !== analyser) return;
-      analyser.getFloatTimeDomainData(samples);
-      let energy = 0;
-      for (const sample of samples) energy += sample * sample;
-      const level = Math.sqrt(energy / samples.length);
-
-      if (!speakingRef.current && !listening) {
-        noiseFloorRef.current = noiseFloorRef.current * 0.96 + level * 0.04;
-      }
-
-      const threshold = Math.max(0.04, noiseFloorRef.current * 3.5);
-      if (speakingRef.current && performance.now() >= interruptAfterRef.current && level > threshold) {
-        loudFramesRef.current += 1;
-        if (loudFramesRef.current >= 4) {
-          loudFramesRef.current = 0;
-          speakingRef.current = false;
-          speechTokenRef.current += 1;
-          window.speechSynthesis.cancel();
-          setStatus(text.listening);
-          restartTimerRef.current = window.setTimeout(() => startListeningRef.current(), 80);
-        }
-      } else {
-        loudFramesRef.current = 0;
-      }
-      voiceActivityFrameRef.current = window.requestAnimationFrame(monitor);
-    };
-    voiceActivityFrameRef.current = window.requestAnimationFrame(monitor);
+    wakeRestartTimerRef.current = window.setTimeout(() => startWakeWordListening(token), 350);
   };
 
   const capture = () => {
@@ -216,7 +221,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setAnswer(data.answer);
-      setStatus('');
+      setStatus(text.wakeHint);
       setQuestion('');
       if (data.memoryToSave) {
         localStorage.setItem(memoryKey, JSON.stringify([...memories, data.memoryToSave].slice(-12)));
@@ -285,14 +290,13 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       setStatus(text.starting);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: false,
       });
       if (!activeRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
       streamRef.current = stream;
-      startVoiceActivityDetection(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -314,8 +318,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       void startCamera(true);
     } else {
       stopListening();
+      stopWakeWordListening();
       stopCamera();
-      speakingRef.current = false;
       speechTokenRef.current += 1;
       window.speechSynthesis.cancel();
     }
@@ -328,8 +332,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   useEffect(() => () => {
     activeRef.current = false;
     stopListening();
+    stopWakeWordListening();
     stopCamera();
-    speakingRef.current = false;
     speechTokenRef.current += 1;
     window.speechSynthesis.cancel();
   }, []);

@@ -321,10 +321,23 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     try {
       stopMedia();
       setStatus(text.starting);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus(text.cameraError + ' (Secure context required)');
+        return;
+      }
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
+      } catch (err) {
+        // Fallback to basic constraints if advanced ones fail
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      }
+
       if (!activeRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -332,15 +345,28 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        videoRef.current.play().catch((e) => console.warn('Video play blocked:', e));
       }
-      setupAudioCapture(stream);
+      
+      try {
+        setupAudioCapture(stream);
+      } catch (audioErr) {
+        console.warn('Audio capture setup failed:', audioErr);
+      }
+      
       setCameraOn(true);
       setStatus(text.ready);
-      speak(text.ready, () => startListeningRef.current());
-    } catch {
-      setStatus(text.cameraError);
-      speak(text.cameraError);
+      
+      // On mobile, speech synthesis might be blocked without a user gesture.
+      try {
+        speak(text.ready, () => startListeningRef.current());
+      } catch (e) {
+        startListeningRef.current();
+      }
+    } catch (err: any) {
+      console.error(err);
+      setStatus(text.cameraError + (err.message ? ` (${err.message})` : ''));
+      try { speak(text.cameraError); } catch (e) {}
     }
   };
 

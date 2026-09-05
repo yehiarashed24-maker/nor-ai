@@ -135,12 +135,22 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     stopListening();
     const token = ++speechTokenRef.current;
     if (speechFallbackRef.current !== null) window.clearTimeout(speechFallbackRef.current);
-    window.speechSynthesis.cancel();
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      onFinished?.();
+      return;
+    }
+    try {
+      window.speechSynthesis.resume();
+    } catch {}
     const utterance = new SpeechSynthesisUtterance(value);
     const voice = selectVoice(lang);
-    utterance.voice = voice ?? null;
-    utterance.lang = voice?.lang || (lang === 'ar' ? 'ar-SA' : 'en-US');
-    utterance.rate = lang === 'ar' ? 0.88 : 0.95;
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    } else {
+      utterance.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
+    }
+    utterance.rate = lang === 'ar' ? 0.9 : 0.95;
     let finished = false;
     const finish = () => {
       if (finished || token !== speechTokenRef.current) return;
@@ -151,7 +161,11 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     };
     utterance.onend = finish;
     utterance.onerror = finish;
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      finish();
+    }
     const estimatedDuration = Math.min(16000, Math.max(2500, value.length * (lang === 'ar' ? 85 : 65)));
     speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1200);
   };
@@ -373,6 +387,14 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       window.removeEventListener('touchstart', unlockTouch);
     };
   }, [open, lang]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const loadVoices = () => { selectVoice(lang); };
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, [lang]);
 
   useEffect(() => () => {
     activeRef.current = false;

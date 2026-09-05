@@ -57,7 +57,9 @@ Return valid JSON only with this shape: {"answer":"...","memoryToSave":null,"tra
     const prompt = `User memory:\n${safeMemories.length ? safeMemories.join('\n') : '(none)'}\n\n${hasQuestion ? `User request: ${question.trim()}` : 'The user request is in the attached audio. Listen carefully and answer it.'}`;
     const parts = [{ text: prompt }];
     if (audioMatch) {
-      parts.push({ inlineData: { mimeType: audioMatch[1], data: audioMatch[2] } });
+      let mime = audioMatch[1];
+      if (mime === 'audio/mp4') mime = 'video/mp4';
+      parts.push({ inlineData: { mimeType: mime, data: audioMatch[2] } });
     }
     parts.push({ inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } });
     const preferredModel = (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL !== 'gemini-3.6-flash')

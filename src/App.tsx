@@ -10,15 +10,28 @@ import { InstallPrompt } from './components/InstallPrompt';
 export const App: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
 
+  const handleOpenAssistant = () => {
+    // Unlock iOS Safari speech synthesis immediately in the synchronous user click event
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const silent = new SpeechSynthesisUtterance(' ');
+        silent.volume = 0.01;
+        window.speechSynthesis.speak(silent);
+      } catch (e) {}
+    }
+    setAssistantOpen(true);
+  };
+
   return (
     <LanguageProvider>
       <div className="relative selection:bg-white/20 transition-all duration-300">
         <ScrollVideo />
         <Navbar />
         <main>
-          <SectionOne onOpenAssistant={() => setAssistantOpen(true)} />
+          <SectionOne onOpenAssistant={handleOpenAssistant} />
           <div aria-hidden="true" className="h-[80vh]" />
-          <SectionTwo onOpenAssistant={() => setAssistantOpen(true)} />
+          <SectionTwo onOpenAssistant={handleOpenAssistant} />
         </main>
         <AssistantModal open={assistantOpen} onClose={() => setAssistantOpen(false)} />
         <InstallPrompt />

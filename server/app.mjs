@@ -62,38 +62,38 @@ Return valid JSON only with this shape: {"answer":"...","memoryToSave":null,"tra
       parts.push({ inlineData: { mimeType: mime, data: audioMatch[2] } });
     }
     parts.push({ inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } });
-    const preferredModel = (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL !== 'gemini-3.6-flash')
-      ? process.env.GEMINI_MODEL
-      : 'gemini-3.5-flash';
+    const candidateModels = [
+      process.env.GEMINI_MODEL,
+      'gemini-3.7-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash',
+    ].filter(Boolean);
 
     let result;
-    try {
-      result = await ai.models.generateContent({
-        model: preferredModel,
-        contents: [{
-          role: 'user',
-          parts,
-        }],
-        config: {
-          systemInstruction,
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-        },
-      });
-    } catch (err) {
-      console.warn(`Model ${preferredModel} failed (${err?.status || err?.message}), falling back to gemini-3.5-flash`);
-      result = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: [{
-          role: 'user',
-          parts,
-        }],
-        config: {
-          systemInstruction,
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-        },
-      });
+    let lastError;
+    for (const model of candidateModels) {
+      try {
+        result = await ai.models.generateContent({
+          model,
+          contents: [{
+            role: 'user',
+            parts,
+          }],
+          config: {
+            systemInstruction,
+            temperature: 0.2,
+            responseMimeType: 'application/json',
+          },
+        });
+        if (result?.text?.trim()) break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Model ${model} failed (${err?.status || err?.message}), trying next candidate...`);
+      }
+    }
+    if (!result?.text?.trim()) {
+      throw lastError || new Error('All candidate models failed.');
     }
 
     const raw = result.text?.trim();

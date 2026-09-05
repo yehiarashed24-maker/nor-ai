@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
+import heroImage from '../assets/hero.png';
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260611_104107_121bfb5a-b1df-4e0d-8240-25b81f7cc85d.mp4';
 
 export const ScrollVideo: React.FC = () => {
+  const [isMobile] = useState(() => window.matchMedia('(max-width: 768px), (pointer: coarse)').matches);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const [framesReady, setFramesReady] = useState(false);
@@ -17,6 +19,7 @@ export const ScrollVideo: React.FC = () => {
 
   // 1. Frame Extraction
   useEffect(() => {
+    if (isMobile) return;
     let isCancelled = false;
     const abortController = new AbortController();
 
@@ -137,10 +140,11 @@ export const ScrollVideo: React.FC = () => {
         blobUrlRef.current = null;
       }
     };
-  }, []);
+  }, [isMobile]);
 
   // 2. Passive Scroll Listener & Calculation
   useEffect(() => {
+    if (isMobile) return;
     const handleScroll = () => {
       const scrollHeight = document.documentElement.scrollHeight;
       const innerHeight = window.innerHeight;
@@ -152,7 +156,7 @@ export const ScrollVideo: React.FC = () => {
     handleScroll();
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  }, [isMobile]);
 
   // 3. Canvas Sizing & Resize Listener
   const resizeCanvas = () => {
@@ -170,13 +174,15 @@ export const ScrollVideo: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isMobile) return;
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     return () => window.removeEventListener('resize', resizeCanvas);
-  }, []);
+  }, [isMobile]);
 
   // 4. Animation Loop
   useEffect(() => {
+    if (isMobile) return;
     let animId: number;
 
     const render = () => {
@@ -237,7 +243,26 @@ export const ScrollVideo: React.FC = () => {
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, []);
+  }, [isMobile]);
+
+  if (isMobile) {
+    return (
+      <div className="fixed inset-0 -z-10 overflow-hidden bg-[#0a0a0a]">
+        <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <video
+          src={VIDEO_URL}
+          muted
+          playsInline
+          autoPlay
+          loop
+          preload="metadata"
+          poster={heroImage}
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        <div className="absolute inset-0 bg-black/20" />
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden">

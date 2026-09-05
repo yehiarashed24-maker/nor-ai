@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nor-ai-v1';
+const CACHE_NAME = 'nor-ai-v3-mobile';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -39,7 +39,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first strategy with cache fallback
+  // Never serve an old application shell after a new Vercel deployment.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // Always prefer the latest deployment; use cache only when fully offline.
   event.respondWith(
     fetch(event.request)
       .then((response) => {

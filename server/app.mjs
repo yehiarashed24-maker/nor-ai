@@ -18,8 +18,12 @@ app.post('/api/assist', async (request, response) => {
     });
   }
 
-  const { question, image, language = 'ar', memories = [] } = request.body ?? {};
-  if (typeof question !== 'string' || !question.trim()) {
+  const { question, audio, image, language = 'ar', memories = [] } = request.body ?? {};
+  const hasQuestion = typeof question === 'string' && Boolean(question.trim());
+  const audioMatch = typeof audio === 'string'
+    ? audio.match(/^data:(audio\/[a-zA-Z0-9.+-]+);base64,(.+)$/s)
+    : null;
+  if (!hasQuestion && !audioMatch) {
     return response.status(400).json({ error: 'A spoken or typed question is required.' });
   }
   if (typeof image !== 'string' || !image.startsWith('data:image/')) {
@@ -44,20 +48,23 @@ Never claim certainty about identity, emotion, danger, distance, or an object yo
 For navigation or safety-critical questions, describe visible facts and advise the user to verify with a cane, guide, or another person. Do not give street-crossing clearance.
 Do not identify real people from their faces. You may describe visible clothing, posture, and non-sensitive social cues.
 Keep the spoken answer short unless the user asks for detail or task steps. Use natural sentences that sound good when read aloud. Avoid technical terms, markdown, emoji, Latin words in Arabic answers, and unnecessary punctuation. Preserve visible text exactly only when the user asks you to read it.
+If spoken audio is attached, transcribe it internally and answer the spoken request. Do not ask the user to repeat unless the audio is unintelligible.
 If the user explicitly asks you to remember a fact, return that fact in memoryToSave. Otherwise return null.
-Return valid JSON only with this shape: {"answer":"...","memoryToSave":null}.`;
+Return valid JSON only with this shape: {"answer":"...","memoryToSave":null,"transcript":"the detected user request"}.`;
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const prompt = `User memory:\n${safeMemories.length ? safeMemories.join('\n') : '(none)'}\n\nUser request: ${question.trim()}`;
+    const prompt = `User memory:\n${safeMemories.length ? safeMemories.join('\n') : '(none)'}\n\n${hasQuestion ? `User request: ${question.trim()}` : 'The user request is in the attached audio. Listen carefully and answer it.'}`;
+    const parts = [{ text: prompt }];
+    if (audioMatch) {
+      parts.push({ inlineData: { mimeType: audioMatch[1], data: audioMatch[2] } });
+    }
+    parts.push({ inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } });
     const result = await ai.models.generateContent({
       model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
       contents: [{
         role: 'user',
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } },
-        ],
+        parts,
       }],
       config: {
         systemInstruction,
@@ -72,6 +79,9 @@ Return valid JSON only with this shape: {"answer":"...","memoryToSave":null}.`;
     return response.json({
       answer: String(parsed.answer || ''),
       memoryToSave: typeof parsed.memoryToSave === 'string' ? parsed.memoryToSave.slice(0, 300) : null,
+      transcript: typeof parsed.transcript === 'string'
+        ? parsed.transcript.slice(0, 500)
+        : (hasQuestion ? question.trim().slice(0, 500) : ''),
     });
   } catch (error) {
     console.error('NOR AI request failed:', error);

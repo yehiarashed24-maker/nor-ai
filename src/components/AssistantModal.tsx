@@ -371,6 +371,19 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   };
 
   useEffect(() => {
+    // Unlock iOS Safari speech synthesis on first touch/click
+    const unlockSpeech = () => {
+      if (speechTokenRef.current > 0) return;
+      const utterance = new SpeechSynthesisUtterance('');
+      utterance.volume = 0;
+      window.speechSynthesis.speak(utterance);
+      speechTokenRef.current = 1;
+      window.removeEventListener('touchstart', unlockSpeech);
+      window.removeEventListener('click', unlockSpeech);
+    };
+    window.addEventListener('touchstart', unlockSpeech, { once: true });
+    window.addEventListener('click', unlockSpeech, { once: true });
+
     activeRef.current = open;
     if (open) void startAssistant();
     else {
@@ -378,7 +391,11 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       speechTokenRef.current += 1;
       window.speechSynthesis.cancel();
     }
-    return () => { activeRef.current = false; };
+    return () => { 
+      activeRef.current = false; 
+      window.removeEventListener('touchstart', unlockSpeech);
+      window.removeEventListener('click', unlockSpeech);
+    };
   }, [open, lang]);
 
   useEffect(() => () => {

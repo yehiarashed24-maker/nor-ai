@@ -21,7 +21,7 @@ app.post('/api/assist', async (request, response) => {
   const { question, audio, image, language = 'ar', memories = [] } = request.body ?? {};
   const hasQuestion = typeof question === 'string' && Boolean(question.trim());
   const audioMatch = typeof audio === 'string'
-    ? audio.match(/^data:(audio\/[a-zA-Z0-9.+-]+);base64,(.+)$/s)
+    ? audio.match(/^data:(audio\/[^;]+).*?;base64,(.+)$/s)
     : null;
   if (!hasQuestion && !audioMatch) {
     return response.status(400).json({ error: 'A spoken or typed question is required.' });

@@ -96,6 +96,26 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     setListening(false);
   };
 
+  const toggleListening = () => {
+    if (audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
+    if (listening) {
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        speechDetectedRef.current = true;
+        finalizingRef.current = true;
+        listeningRef.current = false;
+        setListening(false);
+        setStatus(text.heard);
+        recorderRef.current.requestData();
+        return;
+      }
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
   const stopMedia = () => {
     stopListening();
     if (vadFrameRef.current !== null) window.cancelAnimationFrame(vadFrameRef.current);
@@ -235,9 +255,10 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       else if (listeningRef.current) preRollRef.current = [...preRollRef.current.slice(-3), event.data];
       if (finalizingRef.current) {
         finalizingRef.current = false;
-        const chunks = speechChunksRef.current;
+        const chunks = speechChunksRef.current.length > 0 ? speechChunksRef.current : preRollRef.current;
         const type = recorder.mimeType || event.data.type || 'audio/webm';
         speechChunksRef.current = [];
+        preRollRef.current = [];
         processVoiceRef.current(new Blob(chunks, { type }));
       }
     };
@@ -361,7 +382,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-7">
           <div className="relative aspect-[4/3] max-h-[46dvh] flex-none overflow-hidden rounded-3xl border border-white/15 bg-white/5 sm:aspect-video sm:max-h-none">
-            <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
+            <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
             {!cameraOn && <div className="absolute inset-0 flex items-center justify-center"><Camera size={42} className="text-white/25" /></div>}
             <button type="button" onClick={cameraOn ? stopMedia : () => void startAssistant()} className="absolute bottom-3 start-3 rounded-full border border-white/30 bg-black/60 px-4 py-2 text-sm backdrop-blur-md hover:bg-white hover:text-black">
               {cameraOn ? text.stopCamera : text.camera}
@@ -375,7 +396,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
           <div className="mt-auto flex flex-none items-center gap-2 rounded-full border border-white/20 bg-white/5 p-2 ps-4">
             <input value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitTyped(); }} placeholder={text.ask} className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-white/40" />
-            <button type="button" onClick={listening ? stopListening : startListening} disabled={loading || !cameraOn} aria-label={listening ? text.stop : text.listen} className={`rounded-full p-3 transition ${listening ? 'bg-red-500 text-white' : 'bg-white/10 hover:bg-white hover:text-black'} disabled:opacity-30`}>
+            <button type="button" onClick={toggleListening} disabled={loading || !cameraOn} aria-label={listening ? text.stop : text.listen} className={`rounded-full p-3 transition ${listening ? 'bg-red-500 text-white' : 'bg-white/10 hover:bg-white hover:text-black'} disabled:opacity-30`}>
               {listening ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
             <button type="button" onClick={submitTyped} disabled={loading || !cameraOn || !question.trim()} aria-label={text.send} className="rounded-full bg-white p-3 text-black transition hover:scale-105 disabled:opacity-30">

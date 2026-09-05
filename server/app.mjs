@@ -60,18 +60,39 @@ Return valid JSON only with this shape: {"answer":"...","memoryToSave":null,"tra
       parts.push({ inlineData: { mimeType: audioMatch[1], data: audioMatch[2] } });
     }
     parts.push({ inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } });
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-      contents: [{
-        role: 'user',
-        parts,
-      }],
-      config: {
-        systemInstruction,
-        temperature: 0.2,
-        responseMimeType: 'application/json',
-      },
-    });
+    const preferredModel = (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL !== 'gemini-3.6-flash')
+      ? process.env.GEMINI_MODEL
+      : 'gemini-3.5-flash';
+
+    let result;
+    try {
+      result = await ai.models.generateContent({
+        model: preferredModel,
+        contents: [{
+          role: 'user',
+          parts,
+        }],
+        config: {
+          systemInstruction,
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+        },
+      });
+    } catch (err) {
+      console.warn(`Model ${preferredModel} failed (${err?.status || err?.message}), falling back to gemini-3.5-flash`);
+      result = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: [{
+          role: 'user',
+          parts,
+        }],
+        config: {
+          systemInstruction,
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+        },
+      });
+    }
 
     const raw = result.text?.trim();
     if (!raw) throw new Error('Gemini returned an empty response.');

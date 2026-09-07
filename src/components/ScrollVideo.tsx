@@ -49,16 +49,45 @@ export const ScrollVideo: React.FC = () => {
     return () => cancelAnimationFrame(animId);
   }, []);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.playsInline = true;
+      video.play().catch(() => {});
+    }
+
+    const unlockPlayback = () => {
+      if (video && video.paused) {
+        video.play().catch(() => {});
+      }
+    };
+
+    window.addEventListener('touchstart', unlockPlayback, { passive: true, once: true });
+    window.addEventListener('scroll', unlockPlayback, { passive: true, once: true });
+
+    return () => {
+      window.removeEventListener('touchstart', unlockPlayback);
+      window.removeEventListener('scroll', unlockPlayback);
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden">
+    <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden pointer-events-none select-none">
       <video
         ref={videoRef}
         src={VIDEO_URL}
         muted
         playsInline
+        webkit-playsinline="true"
         autoPlay
         loop
-        className="absolute inset-0 h-full w-full object-cover"
+        preload="auto"
+        disablePictureInPicture
+        disableRemotePlayback
+        className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
+        style={{ pointerEvents: 'none' }}
         onSeeked={() => {
           isSeekingRef.current = false;
         }}

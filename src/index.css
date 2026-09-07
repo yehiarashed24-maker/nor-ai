@@ -47,3 +47,20 @@ body {
     -webkit-user-select: none;
   }
 }
+
+/* Hide native video controls & play button overlay on iOS/Safari/Android */
+video::-webkit-media-controls,
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls-play-button,
+video::-webkit-media-controls-overlay-play-button,
+video::-webkit-media-controls-enclosure,
+video::-webkit-media-controls-panel,
+*::-webkit-media-controls-start-playback-button,
+*::-webkit-media-controls-play-button {
+  display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+

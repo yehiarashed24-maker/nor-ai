@@ -50,22 +50,19 @@ export const ScrollVideo: React.FC = () => {
   }, []);
 
   return (
-    <div className="fixed inset-0 -z-10 overflow-hidden bg-[#030611]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#132346_0%,#070b1b_48%,#020307_100%)]" />
-      
+    <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden">
       <video
         ref={videoRef}
         src={VIDEO_URL}
         muted
         playsInline
         preload="auto"
-        className="absolute inset-0 h-full w-full object-cover opacity-60 mix-blend-screen"
+        className="absolute inset-0 h-full w-full object-cover"
         onSeeked={() => {
           isSeekingRef.current = false;
         }}
       />
-
-      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/60 to-black/90 pointer-events-none" />
+      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
     </div>
   );
 };

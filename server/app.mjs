@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
+import { detectIntent } from './features/intent.mjs';
+import { processIntent } from './features/handlers.mjs';
 
 export const app = express();
 
@@ -18,94 +20,65 @@ app.post('/api/assist', async (request, response) => {
     });
   }
 
-  const { question, audio, image, language = 'ar', memories = [] } = request.body ?? {};
-  const hasQuestion = typeof question === 'string' && Boolean(question.trim());
+  const { question, audio, image, language = 'ar', memories = [], context = {} } = request.body ?? {};
+  
   const audioMatch = typeof audio === 'string'
     ? audio.match(/^data:(audio\/[^;]+).*?;base64,(.+)$/s)
     : null;
-  if (!hasQuestion && !audioMatch) {
+    
+  let questionText = typeof question === 'string' ? question.trim() : '';
+
+  if (!questionText && !audioMatch) {
     return response.status(400).json({ error: 'A spoken or typed question is required.' });
   }
-  if (typeof image !== 'string' || !image.startsWith('data:image/')) {
-    return response.status(400).json({ error: 'A fresh camera image is required.' });
-  }
 
-  const imageMatch = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s);
-  if (!imageMatch) {
-    return response.status(400).json({ error: 'The camera image format is invalid.' });
-  }
-
-  const safeMemories = Array.isArray(memories)
-    ? memories.filter((item) => typeof item === 'string').slice(-12).map((item) => item.slice(0, 300))
-    : [];
-  const answerLanguage = language === 'en'
-    ? 'clear, natural English'
-    : 'clear, natural Egyptian Arabic written entirely in Arabic script';
-  const systemInstruction = `You are NOR AI, a concise voice-first visual assistant for blind and visually impaired people.
-Answer only in ${answerLanguage}, based on the selected website language even if the user asks in another language. Analyze only the single fresh image attached to this request.
-Support scene questions, reading visible text, social context, crowd summaries, step-by-step task guidance, and locating a requested object using simple image-relative directions: left, right, above, below, or center.
-Never claim certainty about identity, emotion, danger, distance, or an object you cannot see clearly. Say when the view is unclear and ask the user to point the camera again.
-For navigation or safety-critical questions, describe visible facts and advise the user to verify with a cane, guide, or another person. Do not give street-crossing clearance.
-Do not identify real people from their faces. You may describe visible clothing, posture, and non-sensitive social cues.
-Keep the spoken answer short unless the user asks for detail or task steps. Use natural sentences that sound good when read aloud. Avoid technical terms, markdown, emoji, Latin words in Arabic answers, and unnecessary punctuation. Preserve visible text exactly only when the user asks you to read it.
-If spoken audio is attached, transcribe it internally and answer the spoken request. Do not ask the user to repeat unless the audio is unintelligible.
-If the user explicitly asks you to remember a fact, return that fact in memoryToSave. Otherwise return null.
-Return valid JSON only with this shape: {"answer":"...","memoryToSave":null,"transcript":"the detected user request"}.`;
-
+  // We still require the image if the intent is unknown or new frame is needed
+  // But we defer the validation to after intent detection if possible.
+  // Actually, for simplicity and since the frontend always sends an image currently:
+  const imageMatch = typeof image === 'string' ? image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s) : null;
+  
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const prompt = `User memory:\n${safeMemories.length ? safeMemories.join('\n') : '(none)'}\n\n${hasQuestion ? `User request: ${question.trim()}` : 'The user request is in the attached audio. Listen carefully and answer it.'}`;
-    const parts = [{ text: prompt }];
-    if (audioMatch) {
+    
+    // Step 1: Transcribe audio if no question text is provided
+    if (!questionText && audioMatch) {
       let mime = audioMatch[1];
       if (mime === 'audio/mp4') mime = 'video/mp4';
-      parts.push({ inlineData: { mimeType: mime, data: audioMatch[2] } });
-    }
-    parts.push({ inlineData: { mimeType: imageMatch[1], data: imageMatch[2] } });
-    const candidateModels = [
-      process.env.GEMINI_MODEL,
-      'gemini-3.7-flash',
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash',
-    ].filter(Boolean);
-
-    let result;
-    let lastError;
-    for (const model of candidateModels) {
-      try {
-        result = await ai.models.generateContent({
-          model,
-          contents: [{
-            role: 'user',
-            parts,
-          }],
-          config: {
-            systemInstruction,
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-          },
-        });
-        if (result?.text?.trim()) break;
-      } catch (err) {
-        lastError = err;
-        console.warn(`Model ${model} failed (${err?.status || err?.message}), trying next candidate...`);
+      const candidateModels = [process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.5-flash'].filter(Boolean);
+      for (const model of candidateModels) {
+        try {
+          const res = await ai.models.generateContent({
+            model,
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: 'Transcribe this audio exactly. Do not answer it. Just write the text in Arabic (if Arabic) or English (if English).' },
+                { inlineData: { mimeType: mime, data: audioMatch[2] } }
+              ]
+            }],
+            config: { temperature: 0.1 }
+          });
+          if (res?.text?.trim()) {
+            questionText = res.text.trim();
+            break;
+          }
+        } catch (err) {
+          console.warn(`Transcription failed with model ${model}, trying next...`);
+        }
       }
     }
-    if (!result?.text?.trim()) {
-      throw lastError || new Error('All candidate models failed.');
+
+    // Step 2: Detect Intent
+    const { intent, needsNewFrame } = await detectIntent(ai, apiKey, questionText, context, language);
+
+    if (needsNewFrame && !imageMatch) {
+      return response.status(400).json({ error: 'A fresh camera image is required for this request.' });
     }
 
-    const raw = result.text?.trim();
-    if (!raw) throw new Error('Gemini returned an empty response.');
-    const parsed = JSON.parse(raw);
-    return response.json({
-      answer: String(parsed.answer || ''),
-      memoryToSave: typeof parsed.memoryToSave === 'string' ? parsed.memoryToSave.slice(0, 300) : null,
-      transcript: typeof parsed.transcript === 'string'
-        ? parsed.transcript.slice(0, 500)
-        : (hasQuestion ? question.trim().slice(0, 500) : ''),
-    });
+    // Step 3: Process Intent
+    const result = await processIntent(ai, intent, needsNewFrame, questionText, audioMatch, imageMatch, memories, context, language);
+
+    return response.json(result);
   } catch (error) {
     console.error('NOR AI request failed:', error);
     return response.status(502).json({ error: 'NOR AI could not analyze this view. Please try again.' });

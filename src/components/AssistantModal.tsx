@@ -36,8 +36,8 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
 const labels = {
   ar: {
     title: 'مساعد نور', close: 'إغلاق', camera: 'تشغيل المساعد', stopCamera: 'إيقاف المساعد',
-    ask: 'اسأل نور عما أمامك…', listen: 'ابدأ الاستماع', stop: 'إيقاف الاستماع', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
-    starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اسألني عن اللي حواليك.',
+    ask: 'اسأل نور عن محيطك، الفلوس، المنتجات، أو المستندات…', listen: 'ابدأ الاستماع', stop: 'إيقاف الاستماع', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
+    starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اسألني عن اللي حواليك، الفلوس، أو المنتجات.',
     listening: 'أنا أسمعك…', heard: 'سمعتك. أجهز سؤالك…', thinking: 'أحلل الصورة والسؤال…', readyAgain: 'جاهز لسؤالك التالي.',
     cameraError: 'تعذر تشغيل الكاميرا أو المايك. اسمح بالصلاحيات ثم اضغط تشغيل المساعد.',
     apiError: 'تعذر تحليل الصورة. حاول مرة أخرى بعد لحظة.',
@@ -46,7 +46,7 @@ const labels = {
   en: {
     title: 'NOR Assistant', close: 'Close', camera: 'Start assistant', stopCamera: 'Stop assistant',
     ask: 'Ask NOR about what is in front of you…', listen: 'Start listening', stop: 'Stop listening', send: 'Send', replay: 'Read answer aloud',
-    starting: 'Preparing the camera and microphone…', ready: 'Camera ready. Ask me about your surroundings.',
+    starting: 'Preparing the camera and microphone…', ready: 'Camera ready. Ask me about your surroundings, money, products, clothes, or documents.',
     listening: 'I am listening…', heard: 'Got it. Preparing your question…', thinking: 'Analyzing the image and question…', readyAgain: 'Ready for your next question.',
     cameraError: 'Could not start the camera or microphone. Allow access, then select Start assistant.',
     apiError: 'The image could not be analyzed. Please try again in a moment.',
@@ -85,6 +85,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const [question, setQuestion] = useState('');
   const [status, setStatus] = useState(text.starting);
   const [answer, setAnswer] = useState('');
+  const [assistContext, setAssistContext] = useState<any>(null);
 
   const stopListening = () => {
     listeningRef.current = false;
@@ -195,12 +196,13 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       const response = await fetch('/api/assist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: typedQuestion, audio, image, language: lang, memories }),
+        body: JSON.stringify({ question: typedQuestion, audio, image, language: lang, memories, context: assistContext }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setAnswer(data.answer);
       setQuestion(data.transcript || typedQuestion || '');
+      setAssistContext(data.context || null);
       if (data.memoryToSave) {
         localStorage.setItem(memoryKey, JSON.stringify([...memories, data.memoryToSave].slice(-12)));
       }
@@ -209,7 +211,11 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       speak(data.answer, () => {
         if (!activeRef.current) return;
         setStatus(text.readyAgain);
-        window.setTimeout(() => startListeningRef.current(), 350);
+        if (data.action?.type === 'CALL') {
+          window.location.href = 'tel:123456789';
+        } else {
+          window.setTimeout(() => startListeningRef.current(), 350);
+        }
       });
     } catch {
       loadingRef.current = false;

@@ -4,13 +4,14 @@ import { ScrollVideo } from './components/ScrollVideo';
 import { Navbar } from './components/Navbar';
 import { SectionOne } from './components/SectionOne';
 import { SectionTwo } from './components/SectionTwo';
-import { AssistantModal } from './components/AssistantModal';
+import { AssistantModal, primeSpeechAudio } from './components/AssistantModal';
 import { InstallPrompt } from './components/InstallPrompt';
 
 export const App: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   const handleOpenAssistant = () => {
+    primeSpeechAudio();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.resume();

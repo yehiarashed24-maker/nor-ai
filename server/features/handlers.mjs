@@ -43,12 +43,13 @@ export async function processIntent(ai, intent, needsNewFrame, question, audioMa
   }
 
   const candidateModels = [
+    // Lite is noticeably faster for short, spoken assistance responses.
+    process.env.GEMINI_FAST_MODEL || 'gemini-3.1-flash-lite',
     process.env.GEMINI_MODEL,
-    'gemini-3.7-flash',
     'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
+    'gemini-3.7-flash',
     'gemini-3.5-flash',
-  ].filter(Boolean);
+  ].filter(Boolean).filter((model, index, models) => models.indexOf(model) === index);
 
   let result;
   let lastError;
@@ -60,6 +61,7 @@ export async function processIntent(ai, intent, needsNewFrame, question, audioMa
         config: {
           systemInstruction,
           temperature: 0.2,
+          maxOutputTokens: 400,
           responseMimeType: 'application/json',
         },
       });

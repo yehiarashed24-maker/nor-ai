@@ -33,8 +33,13 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,mp4,woff2,ttf}'],
-        navigateFallback: '/index.html',
+        // Do not precache index.html. Otherwise an installed PWA can stay on
+        // an old app shell after a release even though the new JS is deployed.
+        // Hash routes need no navigation fallback, so the fresh HTML is always
+        // fetched from Vercel on the next launch.
+        globPatterns: ['**/*.{js,css,ico,png,svg,mp4,woff2,ttf}'],
+        navigateFallback: undefined,
+        cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 10485760 // 10MB to cover video if needed
       }
     })

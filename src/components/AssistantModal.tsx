@@ -3,21 +3,78 @@ import { Camera, LoaderCircle, Mic, MicOff, Send, Volume2, X } from 'lucide-reac
 import { useLanguage } from '../context/LanguageContext';
 
 const memoryKey = 'nor_ai_memory';
+let sharedSpeechAudio: HTMLAudioElement | null = null;
+
+const getSharedSpeechAudio = () => {
+  if (!sharedSpeechAudio && typeof Audio !== 'undefined') sharedSpeechAudio = new Audio();
+  return sharedSpeechAudio;
+};
+
+export const primeSpeechAudio = () => {
+  const audio = getSharedSpeechAudio();
+  if (!audio) return;
+  const sampleRate = 8_000;
+  const sampleBytes = 800;
+  const wav = new ArrayBuffer(44 + sampleBytes);
+  const view = new DataView(wav);
+  const write = (offset: number, value: string) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+  write(0, 'RIFF'); view.setUint32(4, 36 + sampleBytes, true); write(8, 'WAVE'); write(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, sampleBytes, true);
+  const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+  audio.volume = 0;
+  audio.src = url;
+  void audio.play().catch(() => {}).finally(() => {
+    audio.volume = 1;
+    URL.revokeObjectURL(url);
+  });
+};
 
 const selectVoice = (language: 'ar' | 'en') => {
   const locale = language === 'ar' ? 'ar' : 'en';
   const preferredNames = language === 'ar'
-    ? ['Majed', 'Maged', 'Hamed', 'Laila', 'Google العربية', 'Microsoft Hamed']
+    // Egyptian voices are device-dependent. These names cover the common
+    // Windows/Android voices, then we fall back to any Arabic device voice.
+    ? ['Hoda', 'Salma', 'Shaimaa', 'Maged', 'Majed', 'Hamed', 'Laila', 'Google Arabic', 'Google العربية', 'Microsoft']
     : ['Samantha', 'Ava', 'Google US English', 'Microsoft Aria'];
   return window.speechSynthesis.getVoices()
     .filter((voice) => voice.lang.toLowerCase().startsWith(locale))
     .sort((a, b) => {
+      const exactEgyptian = (voice: SpeechSynthesisVoice) =>
+        language === 'ar' && voice.lang.toLowerCase().replace('_', '-') === 'ar-eg' ? 0 : 1;
+      const localeRank = exactEgyptian(a) - exactEgyptian(b);
+      if (localeRank) return localeRank;
       const aIndex = preferredNames.findIndex((name) => a.name.includes(name));
       const bIndex = preferredNames.findIndex((name) => b.name.includes(name));
       const aRank = aIndex === -1 ? preferredNames.length : aIndex;
       const bRank = bIndex === -1 ? preferredNames.length : bIndex;
       return aRank - bRank || Number(b.localService) - Number(a.localService);
     })[0];
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+const getSpeechRecognitionConstructor = (): BrowserSpeechRecognitionConstructor | null => {
+  if (typeof window === 'undefined') return null;
+  const browser = window as unknown as {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  };
+  return browser.SpeechRecognition || browser.webkitSpeechRecognition || null;
 };
 
 const getRecorderOptions = (): MediaRecorderOptions | undefined => {
@@ -38,7 +95,7 @@ const labels = {
     title: 'مساعد نور', close: 'إغلاق', camera: 'تشغيل المساعد', stopCamera: 'إيقاف المساعد',
     ask: 'اسأل نور عن محيطك، الفلوس، المنتجات، أو المستندات…', listen: 'ابدأ الاستماع', stop: 'إيقاف الاستماع', send: 'إرسال', replay: 'إعادة الرد صوتيًا',
     starting: 'أجهز الكاميرا والمايك…', ready: 'الكاميرا جاهزة. اسألني عن اللي حواليك، الفلوس، أو المنتجات.',
-    listening: 'أنا أسمعك…', heard: 'سمعتك. أجهز سؤالك…', thinking: 'أحلل الصورة والسؤال…', readyAgain: 'جاهز لسؤالك التالي.',
+    listening: 'أنا أسمعك…', heard: 'سمعتك. أحوّل كلامك للعربية…', thinking: 'أحلل الصورة والسؤال…', readyAgain: 'جاهز لسؤالك التالي.',
     cameraError: 'تعذر تشغيل الكاميرا أو المايك. اسمح بالصلاحيات ثم اضغط تشغيل المساعد.',
     apiError: 'تعذر تحليل الصورة. حاول مرة أخرى بعد لحظة.',
     noRecorder: 'التسجيل الصوتي غير مدعوم هنا. يمكنك كتابة السؤال وإرساله.',
@@ -60,6 +117,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const vadFrameRef = useRef<number | null>(null);
@@ -88,6 +146,9 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const [assistContext, setAssistContext] = useState<any>(null);
 
   const stopListening = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch {}
+    }
     listeningRef.current = false;
     speechDetectedRef.current = false;
     finalizingRef.current = false;
@@ -102,6 +163,11 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       void audioContextRef.current.resume();
     }
     if (listening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+        stopListening();
+        return;
+      }
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
         speechDetectedRef.current = true;
         finalizingRef.current = true;
@@ -119,10 +185,16 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
   const stopMedia = () => {
     stopListening();
+    const output = getSharedSpeechAudio();
+    output?.pause();
     if (vadFrameRef.current !== null) window.cancelAnimationFrame(vadFrameRef.current);
     vadFrameRef.current = null;
     if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop();
     recorderRef.current = null;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch {}
+      recognitionRef.current = null;
+    }
     void audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
@@ -136,22 +208,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     stopListening();
     const token = ++speechTokenRef.current;
     if (speechFallbackRef.current !== null) window.clearTimeout(speechFallbackRef.current);
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-      onFinished?.();
-      return;
-    }
-    try {
-      window.speechSynthesis.resume();
-    } catch {}
-    const utterance = new SpeechSynthesisUtterance(value);
-    const voice = selectVoice(lang);
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = voice.lang;
-    } else {
-      utterance.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
-    }
-    utterance.rate = lang === 'ar' ? 0.9 : 0.95;
+    getSharedSpeechAudio()?.pause();
     let finished = false;
     const finish = () => {
       if (finished || token !== speechTokenRef.current) return;
@@ -160,15 +217,58 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       speechFallbackRef.current = null;
       onFinished?.();
     };
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      finish();
+
+    const speakWithDevice = () => {
+      if (finished || token !== speechTokenRef.current) return;
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        finish();
+        return;
+      }
+      try { window.speechSynthesis.resume(); } catch {}
+      const utterance = new SpeechSynthesisUtterance(value);
+      const voice = selectVoice(lang);
+      if (voice) utterance.voice = voice;
+      utterance.lang = lang === 'ar' ? 'ar-EG' : (voice?.lang || 'en-US');
+      utterance.rate = lang === 'ar' ? 1.02 : 1.05;
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      try { window.speechSynthesis.speak(utterance); } catch { finish(); }
+      const estimatedDuration = Math.min(12000, Math.max(1800, value.length * (lang === 'ar' ? 62 : 55)));
+      speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1200);
+    };
+
+    if (lang !== 'ar') {
+      speakWithDevice();
+      return;
     }
-    const estimatedDuration = Math.min(16000, Math.max(2500, value.length * (lang === 'ar' ? 85 : 65)));
-    speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1200);
+
+    // Safari/macOS does not ship an Egyptian Arabic voice. Generate the Arabic
+    // reply on the server so every device hears the same Egyptian delivery.
+    let fallbackStarted = false;
+    const fallback = () => {
+      if (fallbackStarted) return;
+      fallbackStarted = true;
+      speakWithDevice();
+    };
+    void fetch('/api/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: value }),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('TTS request failed');
+        return response.json();
+      })
+      .then((data) => {
+        if (token !== speechTokenRef.current || typeof data.audio !== 'string') return;
+        const audio = getSharedSpeechAudio();
+        if (!audio) return fallback();
+        audio.src = data.audio;
+        audio.onended = finish;
+        audio.onerror = fallback;
+        void audio.play().catch(fallback);
+      })
+      .catch(fallback);
   };
 
   const captureFrame = () => {
@@ -242,7 +342,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   useEffect(() => { processVoiceRef.current = (blob) => void processVoice(blob); });
 
   const startListening = () => {
-    if (!activeRef.current || loadingRef.current || !streamRef.current || !recorderRef.current) return;
+    if (!activeRef.current || loadingRef.current || !streamRef.current) return;
     listeningRef.current = true;
     speechDetectedRef.current = false;
     finalizingRef.current = false;
@@ -254,6 +354,15 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     calibrateUntilRef.current = performance.now() + 700;
     setListening(true);
     setStatus(text.listening);
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch {
+        // A duplicate start is harmless; the active recognizer will finish.
+      }
+      return;
+    }
+    if (!recorderRef.current) return;
   };
   useEffect(() => { startListeningRef.current = startListening; });
 
@@ -302,7 +411,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
     const monitor = () => {
       if (!activeRef.current || analyserRef.current !== analyser) return;
-      if (listeningRef.current && !loadingRef.current && !finalizingRef.current) {
+      if (!recognitionRef.current && listeningRef.current && !loadingRef.current && !finalizingRef.current) {
         analyser.getFloatTimeDomainData(samples);
         let energy = 0;
         for (const sample of samples) energy += sample * sample;
@@ -343,6 +452,37 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     vadFrameRef.current = window.requestAnimationFrame(monitor);
   };
 
+  const setupFastRecognition = () => {
+    const Recognition = getSpeechRecognitionConstructor();
+    if (!Recognition) return;
+    const recognition = new Recognition();
+    recognition.lang = lang === 'ar' ? 'ar-EG' : 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (!transcript) return;
+      listeningRef.current = false;
+      setListening(false);
+      setQuestion(transcript);
+      setStatus(text.heard);
+      void sendRequest({ typedQuestion: transcript });
+    };
+    recognition.onerror = (event) => {
+      // Permission/network failures use the proven recorder fallback instead.
+      if (event.error !== 'aborted') recognitionRef.current = null;
+    };
+    recognition.onend = () => {
+      if (!loadingRef.current) {
+        listeningRef.current = false;
+        setListening(false);
+        setStatus(text.readyAgain);
+      }
+    };
+    recognitionRef.current = recognition;
+  };
+
   const startAssistant = async () => {
     try {
       stopMedia();
@@ -365,6 +505,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         }
       }
       setupAudioCapture(stream);
+      setupFastRecognition();
       setCameraOn(true);
       setStatus(text.ready);
       speak(text.ready, () => startListeningRef.current());

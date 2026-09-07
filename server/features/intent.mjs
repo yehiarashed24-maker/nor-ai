@@ -1,83 +1,23 @@
-export async function detectIntent(ai, apiKey, question, context, language = 'ar') {
+export async function detectIntent(_ai, _apiKey, question, context, _language = 'ar') {
   if (!question || !question.trim()) {
     return { intent: 'UNKNOWN', needsNewFrame: true };
   }
 
-  const systemInstruction = `You are the Intent Router for NOR AI, a visual assistant.
-Analyze the user's question to determine the required capability.
-Choose EXACTLY ONE intent from this list:
-SCENE (general view description, looking around)
-READ_TEXT (finding or reading general text in the scene)
-SOCIAL (reading faces, social cues, posture, but NOT identifying specific people)
-CROWD (describing a crowd or busy area)
-DIRECTION (finding objects and giving relative directions)
-TASK (step-by-step guidance for a physical task)
-MEMORY (recalling a saved memory)
-MONEY (recognizing currency, counting money, asking "how much is this note")
-OUTFIT (describing clothing, colors, matching, orientation)
-PRODUCT (identifying a packaged product, reading expiry date, ingredients, size)
-DOCUMENT (reading, summarizing, or extracting info from a document like a receipt, invoice, letter, paper)
-HUMAN_ASSIST (asking to talk to a human, call someone, or get help from a person)
-UNKNOWN (fallback if none apply)
-
-Respond with ONLY valid JSON using this schema:
-{
-  "intent": "string",
-  "needsNewFrame": "boolean"
-}
-
-Rule for needsNewFrame:
-It should ALWAYS be true, EXCEPT when the intent is DOCUMENT AND the user is asking a follow-up question about the CURRENT document that can be answered from the extractedText in the provided context, without needing to see the paper again.
-
-Examples:
-"دي كام؟" -> MONEY
-"دول لايقين على بعض؟" -> OUTFIT
-"دي عبوة إيه؟" -> PRODUCT
-"اقرأ الورقة دي" -> DOCUMENT
-"لخص المستند ده" -> DOCUMENT
-"المبلغ كام؟" (if context has document) -> DOCUMENT (needsNewFrame: false)
-"ساعدني بحد" -> HUMAN_ASSIST`;
-
-  const promptText = `Context: ${JSON.stringify(context || {})}
-User Question: ${question.trim()}`;
-
-  const candidateModels = [
-    process.env.GEMINI_MODEL,
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-    'gemini-3.7-flash',
-    'gemini-3.5-flash',
-  ].filter(Boolean);
-
-  let result;
-  for (const model of candidateModels) {
-    try {
-      result = await ai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [{ text: promptText }] }],
-        config: {
-          systemInstruction,
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-        },
-      });
-      if (result?.text?.trim()) break;
-    } catch (err) {
-      console.warn(`Intent model ${model} failed, trying next...`);
-    }
-  }
-
-  if (!result?.text?.trim()) {
-    return { intent: 'UNKNOWN', needsNewFrame: true };
-  }
-
-  try {
-    const parsed = JSON.parse(result.text.trim());
-    return {
-      intent: parsed.intent || 'UNKNOWN',
-      needsNewFrame: typeof parsed.needsNewFrame === 'boolean' ? parsed.needsNewFrame : true,
-    };
-  } catch {
-    return { intent: 'UNKNOWN', needsNewFrame: true };
-  }
+  // Intent selection used to make a separate Gemini request before every
+  // answer. A local router removes that entire round trip (usually 5–10 s).
+  const value = question.trim().toLowerCase();
+  const has = (pattern) => pattern.test(value);
+  const documentFollowUp = Boolean(context?.extractedText) && has(/المبلغ|الإجمالي|التاريخ|لخص|الورقة|الفاتورة|الإيصال|total|date|summari[sz]e|receipt|invoice/);
+  if (documentFollowUp) return { intent: 'DOCUMENT', needsNewFrame: false };
+  if (has(/ساعدني بحد|اتصل|كلم|مساعدة بشرية|call|contact|human help/)) return { intent: 'HUMAN_ASSIST', needsNewFrame: true };
+  if (has(/افتكر|احفظ|ذكرني|memory|remember|save this/)) return { intent: 'MEMORY', needsNewFrame: true };
+  if (has(/جنيه|فلوس|عملة|ورقة.*كام|denomination|money|cash|currency/)) return { intent: 'MONEY', needsNewFrame: true };
+  if (has(/فاتورة|إيصال|مستند|ورقة|اقرأ|نص|receipt|invoice|document|read (this|the) (paper|text)/)) return { intent: 'DOCUMENT', needsNewFrame: true };
+  if (has(/عبوة|منتج|صلاحية|مكونات|بيبسي|product|expiry|expiration|ingredients|package/)) return { intent: 'PRODUCT', needsNewFrame: true };
+  if (has(/لابس|لبس|لون|لايق|outfit|wearing|match|color/)) return { intent: 'OUTFIT', needsNewFrame: true };
+  if (has(/زحمة|ناس كتير|crowd|busy|how many people/)) return { intent: 'CROWD', needsNewFrame: true };
+  if (has(/يمين|شمال|فين|مكان|قدامي|right|left|where is|find/)) return { intent: 'DIRECTION', needsNewFrame: true };
+  if (has(/خطوة|اعمل إيه|ساعدني أ|how do i|step by step/)) return { intent: 'TASK', needsNewFrame: true };
+  if (has(/شخص|وش|واقف|people|person|face/)) return { intent: 'SOCIAL', needsNewFrame: true };
+  return { intent: 'SCENE', needsNewFrame: true };
 }

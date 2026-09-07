@@ -12,7 +12,7 @@ NOR AI هو تطبيق ويب مساعد بصري للمكفوفين وضعاف 
 4. يبدأ الاستماع تلقائيًا.
 5. يتحدث المستخدم بدون الضغط على Capture أو Send.
 6. عند انتهاء السؤال، يلتقط التطبيق Frame واحدة من الكاميرا.
-7. يرسل السؤال والصورة فقط إلى Gemini من خلال الخادم.
+7. يرسل التسجيل إلى Whisper العربية، ثم يرسل النص والصورة فقط إلى Gemini من خلال الخادم.
 8. يعرض نور الإجابة وينطقها بصوت واضح.
 9. بعد انتهاء الإجابة، يعود تلقائيًا للاستماع للسؤال التالي.
 
@@ -20,6 +20,8 @@ NOR AI هو تطبيق ويب مساعد بصري للمكفوفين وضعاف 
 Voice Input
     ↓
 MediaRecorder + Voice Activity Detection
+    ↓
+Arabic Whisper (dev-ahmedhany/whisper-large-v3-turbo-arabic-ft)
     ↓
 Capture One Camera Frame
     ↓
@@ -128,7 +130,8 @@ NOR AI أداة مساعدة بصرية وليست بديلًا للعصا ال�
 
 ### AI
 
-- Gemini Multimodal
+- `dev-ahmedhany/whisper-large-v3-turbo-arabic-ft` للتفريغ الصوتي العربي، داخل خدمة Python مستقلة.
+- Gemini Multimodal لفهم السؤال والصورة وصياغة الإجابة.
 - النموذج الافتراضي: `gemini-3.6-flash`
 - تعليمات مخصصة للإجابات القصيرة، اللغة المختارة، الأمان، الذاكرة، والاتجاهات.
 - استجابة JSON منظمة تحتوي على الإجابة والذكرى الجديدة عند وجودها.
@@ -176,9 +179,27 @@ npm run dev
 GEMINI_API_KEY=your_key
 GEMINI_MODEL=gemini-3.6-flash
 PORT=8787
+# اختياري أثناء التطوير؛ Gemini يتولى التفريغ كحل احتياطي إن لم يكن مضبوطًا.
+WHISPER_API_URL=http://localhost:8000
+# استخدم رمزًا قويًا عند نشر خدمة Whisper خارج الشبكة الخاصة.
+WHISPER_API_TOKEN=choose-a-long-secret
 ```
 
 لا تضع مفتاحًا حقيقيًا داخل `.env.example` أو أي ملف داخل `src`.
+
+### تشغيل Whisper العربية
+
+نموذج Whisper الكبير لا يصلح للتشغيل داخل المتصفح أو Vercel؛ الـPWA تبقى خفيفة والنموذج يعمل في خدمة GPU مستقلة. يتطلب ذلك Python حديثًا و`ffmpeg`، وGPU يدعم BF16 موصى به.
+
+```bash
+cd asr-service
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+بعدها اضبط `WHISPER_API_URL` في بيئة خادم Node. يمكن بدلًا من ذلك نشر مجلد `asr-service` كحاوية GPU؛ لا تضع رابط الخدمة أو رمز الوصول في `src/` لأن المتصفح لا يتصل بالنموذج مباشرة.
 
 ## الأوامر
 
@@ -196,9 +217,10 @@ npm run preview   # معاينة نسخة الإنتاج
 1. شغّل `npm run build` لإنشاء مجلد `dist`.
 2. انشر ملفات `dist` كواجهة الموقع.
 3. شغّل `server/index.mjs` في بيئة Node.js.
-4. أضف `GEMINI_API_KEY` و`GEMINI_MODEL` و`PORT` إلى متغيرات بيئة الخادم.
-5. وجّه طلبات `/api/*` إلى خادم Express.
-6. استخدم HTTPS في الإنتاج لأن الكاميرا والمايك يحتاجان سياقًا آمنًا خارج `localhost`.
+4. أضف `GEMINI_API_KEY` و`GEMINI_MODEL` و`PORT` و`WHISPER_API_URL` إلى متغيرات بيئة خادم Node.
+5. انشر `asr-service` على عامل GPU/حاوية منفصلة مع `ffmpeg`، واضبط `WHISPER_API_TOKEN` نفسه في الخدمتين إن كانت الخدمة مكشوفة خارجيًا.
+6. وجّه طلبات `/api/*` إلى خادم Express.
+7. استخدم HTTPS في الإنتاج لأن الكاميرا والمايك يحتاجان سياقًا آمنًا خارج `localhost`.
 
 ## حالة المشروع
 

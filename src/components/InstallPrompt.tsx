@@ -93,9 +93,9 @@ export const InstallPrompt: React.FC = () => {
   return (
     <>
       {/* Floating Install Notification / Banner */}
-      <div className="fixed bottom-4 start-4 end-4 z-40 mx-auto max-w-lg sm:bottom-6 sm:start-8 sm:end-auto sm:max-w-md">
-        <div className="relative flex items-center justify-between gap-4 rounded-2xl border border-white/20 bg-[#0e0e0e]/90 p-4 shadow-2xl backdrop-blur-xl transition-all">
-          <div className="flex items-center gap-3.5 min-w-0">
+      <div className="fixed bottom-4 end-4 z-40 sm:bottom-6 sm:end-auto sm:start-8 sm:max-w-md">
+        <div className="relative flex items-center justify-between gap-2 rounded-full border border-white/20 bg-[#0e0e0e]/90 p-2 shadow-2xl backdrop-blur-xl transition-all sm:gap-4 sm:rounded-2xl sm:p-4">
+          <div className="hidden items-center gap-3.5 min-w-0 sm:flex">
             <img
               src="/logo.png"
               alt="NOR AI Logo"
@@ -119,7 +119,7 @@ export const InstallPrompt: React.FC = () => {
               className="flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 font-mono text-xs font-semibold text-black transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-md"
             >
               <Download size={14} />
-              <span>{t.installBtn}</span>
+              <span className="hidden sm:inline">{t.installBtn}</span>
             </button>
             <button
               type="button"

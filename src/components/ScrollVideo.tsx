@@ -3,36 +3,12 @@ import React, { useEffect, useRef } from 'react';
 const VIDEO_URL = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260611_104107_121bfb5a-b1df-4e0d-8240-25b81f7cc85d.mp4';
 
 export const ScrollVideo: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const targetProgressRef = useRef(0);
   const smoothedProgressRef = useRef(0);
   const isSeekingRef = useRef(false);
 
-  const drawFrame = () => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video || video.readyState < 2) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if (!vw || !vh) return;
-
-    const scale = Math.max(cw / vw, ch / vh);
-    const dw = vw * scale;
-    const dh = vh * scale;
-    const dx = (cw - dw) / 2;
-    const dy = (ch - dh) / 2;
-
-    ctx.drawImage(video, dx, dy, dw, dh);
-  };
-
-  // 1. Scroll tracking
+  // 1. Passive scroll listener
   useEffect(() => {
     const handleScroll = () => {
       const scrollHeight = document.documentElement.scrollHeight;
@@ -47,27 +23,7 @@ export const ScrollVideo: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // 2. Canvas sizing with DPR support
-  useEffect(() => {
-    const resizeCanvas = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.round(canvas.clientWidth * dpr);
-      const h = Math.round(canvas.clientHeight * dpr);
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        drawFrame();
-      }
-    };
-
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, []);
-
-  // 3. Render animation loop
+  // 2. Hardware-accelerated 60fps render loop
   useEffect(() => {
     let animId: number;
     const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -87,7 +43,6 @@ export const ScrollVideo: React.FC = () => {
         }
       }
 
-      drawFrame();
       animId = requestAnimationFrame(render);
     };
 
@@ -95,41 +50,40 @@ export const ScrollVideo: React.FC = () => {
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // 4. Prime video playback for Safari buffer
+  // 3. Guarantee Safari muted inline autoplay to eliminate the native play button
   useEffect(() => {
     const video = videoRef.current;
-    if (video) {
-      video.muted = true;
-      video.defaultMuted = true;
-      video.playsInline = true;
-      video.play().catch(() => {});
-    }
+    if (!video) return;
 
-    const unlockPlayback = () => {
-      if (video && video.paused) {
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.controls = false;
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.removeAttribute('controls');
+
+    const startPlayback = () => {
+      if (video) {
+        video.muted = true;
         video.play().catch(() => {});
       }
     };
 
-    window.addEventListener('touchstart', unlockPlayback, { passive: true, once: true });
-    window.addEventListener('scroll', unlockPlayback, { passive: true, once: true });
+    startPlayback();
+
+    window.addEventListener('touchstart', startPlayback, { passive: true, once: true });
+    window.addEventListener('scroll', startPlayback, { passive: true, once: true });
 
     return () => {
-      window.removeEventListener('touchstart', unlockPlayback);
-      window.removeEventListener('scroll', unlockPlayback);
+      window.removeEventListener('touchstart', startPlayback);
+      window.removeEventListener('scroll', startPlayback);
     };
   }, []);
 
   return (
     <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden pointer-events-none select-none">
-      {/* Canvas displays the video frames with ZERO native browser media controls or play button */}
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
-      />
-      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-
-      {/* Hidden off-screen video element strictly used as media source for canvas rendering */}
       <video
         ref={videoRef}
         src={VIDEO_URL}
@@ -141,24 +95,13 @@ export const ScrollVideo: React.FC = () => {
         preload="auto"
         disablePictureInPicture
         disableRemotePlayback
-        className="pointer-events-none select-none"
-        style={{
-          position: 'fixed',
-          top: '-9999px',
-          left: '-9999px',
-          width: '1px',
-          height: '1px',
-          opacity: 0.01,
-          pointerEvents: 'none',
-        }}
+        className="absolute inset-0 h-full w-full object-cover pointer-events-none select-none"
+        style={{ pointerEvents: 'none' }}
         onSeeked={() => {
           isSeekingRef.current = false;
-          drawFrame();
-        }}
-        onLoadedData={() => {
-          drawFrame();
         }}
       />
+      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
     </div>
   );
 };

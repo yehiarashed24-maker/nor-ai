@@ -4,7 +4,7 @@ const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260611_104107_121bfb5a-b1df-4e0d-8240-25b81f7cc85d.mp4';
 
 export const ScrollVideo: React.FC = () => {
-  const [isMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  const [isMobile] = useState(() => window.matchMedia('(max-width: 768px), (pointer: coarse)').matches);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const [framesReady, setFramesReady] = useState(false);
@@ -13,6 +13,7 @@ export const ScrollVideo: React.FC = () => {
   const targetProgressRef = useRef(0);
   const smoothedProgressRef = useRef(0);
   const lastDrawnIndexRef = useRef(-1);
+  const isSeekingRef = useRef(false);
   const blobUrlRef = useRef<string | null>(null);
 
   const drawFallbackFrame = () => {
@@ -29,6 +30,9 @@ export const ScrollVideo: React.FC = () => {
 
   // 1. Frame Extraction
   useEffect(() => {
+    // Extracting dozens of ImageBitmaps blocks mobile Safari's main thread.
+    // Mobile scrubs the hidden video directly in the animation loop instead.
+    if (isMobile) return;
     let isCancelled = false;
     const abortController = new AbortController();
 
@@ -74,13 +78,11 @@ export const ScrollVideo: React.FC = () => {
         if (isCancelled) return;
 
         const duration = video.duration || 5;
-        // On mobile we limit frames to 45 (approx 10-15 fps depending on scroll speed) to avoid memory crashes
-        const frameCount = isMobile ? Math.min(Math.round(duration * 12), 45) : Math.min(Math.max(Math.round(duration * 24), 30), 120);
+        const frameCount = Math.min(Math.max(Math.round(duration * 24), 30), 120);
 
         const vw = video.videoWidth || 1280;
         const vh = video.videoHeight || 720;
-        const maxW = isMobile ? 640 : 1280;
-        const scale = vw > maxW ? maxW / vw : 1;
+        const scale = vw > 1280 ? 1280 / vw : 1;
         const targetWidth = Math.round(vw * scale);
         const targetHeight = Math.round(vh * scale);
 
@@ -114,7 +116,7 @@ export const ScrollVideo: React.FC = () => {
             bitmap = await createImageBitmap(video, {
               resizeWidth: targetWidth,
               resizeHeight: targetHeight,
-              resizeQuality: isMobile ? 'low' : 'high',
+              resizeQuality: 'high',
             });
           } catch {
             const frameCanvas = document.createElement('canvas');
@@ -126,14 +128,10 @@ export const ScrollVideo: React.FC = () => {
 
           extractedFrames.push(bitmap);
           framesRef.current = extractedFrames;
-          
           if (extractedFrames.length === 1) {
             lastDrawnIndexRef.current = -1;
             setFramesReady(true);
           }
-          
-          // YIELD TO MAIN THREAD: Prevents UI from hanging ("فرونت بيعلق") on mobile!
-          await new Promise((r) => setTimeout(r, isMobile ? 15 : 5));
         }
 
         if (!isCancelled) {
@@ -207,7 +205,7 @@ export const ScrollVideo: React.FC = () => {
     const render = () => {
       // Smooth progress calculation
       const target = targetProgressRef.current;
-      smoothedProgressRef.current += (target - smoothedProgressRef.current) * 0.15; // Slightly faster smooth on mobile
+      smoothedProgressRef.current += (target - smoothedProgressRef.current) * 0.1;
       const smoothed = smoothedProgressRef.current;
 
       const frames = framesRef.current;
@@ -242,9 +240,19 @@ export const ScrollVideo: React.FC = () => {
             lastDrawnIndexRef.current = frameIndex;
           }
         }
-      } else if (!framesReady && fallbackVideoRef.current && canvas) {
-         // Fallback before frames are ready
-         drawFallbackFrame();
+      } else if (fallbackVideoRef.current) {
+        // Scrub fallback video
+        const fallback = fallbackVideoRef.current;
+        if (fallback.duration && !Number.isNaN(fallback.duration)) {
+          const targetTime = smoothed * fallback.duration;
+          if (
+            !isSeekingRef.current &&
+            Math.abs(fallback.currentTime - targetTime) > 0.001
+          ) {
+            isSeekingRef.current = true;
+            fallback.currentTime = targetTime;
+          }
+        }
       }
 
       animId = requestAnimationFrame(render);
@@ -252,12 +260,12 @@ export const ScrollVideo: React.FC = () => {
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [framesReady]);
+  }, [isMobile]);
 
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden bg-[#030611]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#132346_0%,#070b1b_48%,#020307_100%)]" />
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full opacity-60 mix-blend-screen transition-opacity duration-1000" />
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
 
       {!framesReady && (
         <video
@@ -265,14 +273,23 @@ export const ScrollVideo: React.FC = () => {
           src={VIDEO_URL}
           muted
           playsInline
-          autoPlay={true}
-          loop={true}
+          autoPlay={false}
+          preload="auto"
+          disablePictureInPicture
+          aria-hidden="true"
           className="pointer-events-none absolute h-px w-px opacity-0"
+          onLoadedData={() => {
+            drawFallbackFrame();
+          }}
+          onSeeked={() => {
+            drawFallbackFrame();
+            isSeekingRef.current = false;
+          }}
         />
       )}
 
       {/* Contrast overlay */}
-      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/60 to-black/90 pointer-events-none" />
+      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
     </div>
   );
 };

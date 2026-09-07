@@ -260,13 +260,28 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         return response.json();
       })
       .then((data) => {
-        if (token !== speechTokenRef.current || typeof data.audio !== 'string') return;
-        const audio = getSharedSpeechAudio();
-        if (!audio) return fallback();
-        audio.src = data.audio;
-        audio.onended = finish;
-        audio.onerror = fallback;
-        void audio.play().catch(fallback);
+        if (token !== speechTokenRef.current || !data.audio) return fallback();
+        
+        const audioUrls = Array.isArray(data.audio) ? data.audio : [data.audio];
+        if (audioUrls.length === 0) return fallback();
+
+        let currentIndex = 0;
+        const playNext = () => {
+          if (currentIndex >= audioUrls.length || token !== speechTokenRef.current) {
+            return finish();
+          }
+          const audio = getSharedSpeechAudio();
+          if (!audio) return fallback();
+          audio.src = audioUrls[currentIndex];
+          audio.onended = () => {
+            currentIndex++;
+            playNext();
+          };
+          audio.onerror = fallback;
+          void audio.play().catch(fallback);
+        };
+        
+        playNext();
       })
       .catch(fallback);
   };

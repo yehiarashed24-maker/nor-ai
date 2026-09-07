@@ -32,39 +32,25 @@ const pcmToWavDataUrl = (pcmBase64, sampleRate = 24_000) => {
   return `data:audio/wav;base64,${Buffer.concat([header, pcm]).toString('base64')}`;
 };
 
+import * as googleTTS from 'google-tts-api';
+
 app.post('/api/speech', async (request, response) => {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const text = typeof request.body?.text === 'string' ? request.body.text.trim().slice(0, 700) : '';
-  if (!apiKey) return response.status(503).json({ error: 'GEMINI_API_KEY is missing.' });
+  const text = typeof request.body?.text === 'string' ? request.body.text.trim().slice(0, 800) : '';
   if (!text) return response.status(400).json({ error: 'Text is required.' });
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const result = await ai.models.generateContent({
-      model: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
-      contents: [{
-        role: 'user',
-        parts: [{ text: `انطق النص التالي فقط بصوت مصري طبيعي ودافئ وواضح، من غير إضافة أي كلام:\n${text}` }],
-      }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          languageCode: 'ar-EG',
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: process.env.GEMINI_TTS_VOICE || 'Kore' } },
-        },
-      },
-    });
-    const audioPart = result.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data);
-    if (!audioPart?.inlineData?.data) throw new Error('TTS returned no audio');
-    const rate = Number(audioPart.inlineData.mimeType?.match(/rate=(\d+)/)?.[1]) || 24_000;
-    const audio = audioPart.inlineData.mimeType?.includes('wav')
-      ? `data:audio/wav;base64,${audioPart.inlineData.data}`
-      : pcmToWavDataUrl(audioPart.inlineData.data, rate);
+    const urls = googleTTS.getAllAudioUrls(text, {
+      lang: 'ar',
+      slow: false,
+      host: 'https://translate.google.com',
+      splitPunct: '،,.؟?',
+    }).map(u => u.url);
+
     response.set('Cache-Control', 'no-store');
-    return response.json({ audio });
+    return response.json({ audio: urls });
   } catch (error) {
-    console.error('Egyptian TTS failed:', error);
-    return response.status(502).json({ error: 'Egyptian voice generation failed.' });
+    console.error('Arabic TTS failed:', error);
+    return response.status(502).json({ error: 'Arabic voice generation failed.' });
   }
 });
 

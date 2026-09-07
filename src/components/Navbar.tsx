@@ -31,9 +31,9 @@ export const Navbar: React.FC = () => {
       </div>
 
       {/* Top end (right in LTR, left in RTL) */}
-      <nav className="fixed end-5 top-5 z-50 sm:end-8 sm:top-7 md:end-12 flex flex-col sm:flex-row-reverse sm:items-center sm:gap-6">
+      <nav className="fixed end-5 top-5 z-50 sm:end-8 sm:top-7 md:end-12">
         {/* Language Switcher */}
-        <div className="flex justify-end mb-3 sm:mb-0">
+        <div className="flex justify-end mb-3 sm:mb-4">
           <Reveal delay={80}>
             <button
               onClick={toggleLang}
@@ -48,7 +48,7 @@ export const Navbar: React.FC = () => {
           </Reveal>
         </div>
 
-        <ul className="hidden sm:flex flex-row items-center gap-4 sm:gap-6">
+        <ul className="flex flex-col items-end gap-1.5 sm:gap-2">
           {t.nav.map((link, i) => (
             <li key={link.name}>
               <Reveal delay={140 + i * 100}>

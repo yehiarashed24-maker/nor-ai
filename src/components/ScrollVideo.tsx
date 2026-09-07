@@ -35,7 +35,7 @@ export const ScrollVideo: React.FC = () => {
       const video = videoRef.current;
       if (video && video.readyState >= 2 && video.duration) {
         const targetTime = smoothed * video.duration;
-        
+
         if (!isSeekingRef.current && Math.abs(video.currentTime - targetTime) > 0.03) {
           isSeekingRef.current = true;
           video.currentTime = targetTime;
@@ -56,7 +56,8 @@ export const ScrollVideo: React.FC = () => {
         src={VIDEO_URL}
         muted
         playsInline
-        preload="auto"
+        autoPlay
+        loop
         className="absolute inset-0 h-full w-full object-cover"
         onSeeked={() => {
           isSeekingRef.current = false;

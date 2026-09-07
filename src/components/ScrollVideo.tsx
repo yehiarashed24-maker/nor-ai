@@ -1,168 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 
-const VIDEO_URL =
-  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260611_104107_121bfb5a-b1df-4e0d-8240-25b81f7cc85d.mp4';
+const VIDEO_URL = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260611_104107_121bfb5a-b1df-4e0d-8240-25b81f7cc85d.mp4';
 
 export const ScrollVideo: React.FC = () => {
-  const [isMobile] = useState(() => window.matchMedia('(max-width: 768px), (pointer: coarse)').matches);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [framesReady, setFramesReady] = useState(false);
-
-  const framesRef = useRef<ImageBitmap[]>([]);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const targetProgressRef = useRef(0);
   const smoothedProgressRef = useRef(0);
-  const lastDrawnIndexRef = useRef(-1);
   const isSeekingRef = useRef(false);
-  const blobUrlRef = useRef<string | null>(null);
 
-  const drawFallbackFrame = () => {
-    const video = fallbackVideoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!video || !canvas || !ctx || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-    const drawW = video.videoWidth * scale;
-    const drawH = video.videoHeight * scale;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, (canvas.width - drawW) / 2, (canvas.height - drawH) / 2, drawW, drawH);
-  };
-
-  // 1. Frame Extraction
-  useEffect(() => {
-    // Extracting dozens of ImageBitmaps blocks mobile Safari's main thread.
-    // Mobile scrubs the hidden video directly in the animation loop instead.
-    if (isMobile) return;
-    let isCancelled = false;
-    const abortController = new AbortController();
-
-    async function loadAndExtractFrames() {
-      try {
-        const response = await fetch(VIDEO_URL, {
-          signal: abortController.signal,
-        });
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const blob = await response.blob();
-        if (isCancelled) return;
-
-        const blobUrl = URL.createObjectURL(blob);
-        blobUrlRef.current = blobUrl;
-
-        const video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        video.preload = 'auto';
-        video.src = blobUrl;
-
-        await new Promise<void>((resolve, reject) => {
-          if (video.readyState >= 1) {
-            resolve();
-            return;
-          }
-          const onLoaded = () => {
-            cleanup();
-            resolve();
-          };
-          const onError = () => {
-            cleanup();
-            reject(new Error('Video metadata load failed'));
-          };
-          const cleanup = () => {
-            video.removeEventListener('loadedmetadata', onLoaded);
-            video.removeEventListener('error', onError);
-          };
-          video.addEventListener('loadedmetadata', onLoaded);
-          video.addEventListener('error', onError);
-        });
-
-        if (isCancelled) return;
-
-        const duration = video.duration || 5;
-        const frameCount = Math.min(Math.max(Math.round(duration * 24), 30), 120);
-
-        const vw = video.videoWidth || 1280;
-        const vh = video.videoHeight || 720;
-        const scale = vw > 1280 ? 1280 / vw : 1;
-        const targetWidth = Math.round(vw * scale);
-        const targetHeight = Math.round(vh * scale);
-
-        const extractedFrames: ImageBitmap[] = [];
-        const safeDuration = Math.max(0.1, duration - 0.05);
-
-        for (let i = 0; i < frameCount; i++) {
-          if (isCancelled) {
-            extractedFrames.forEach((bmp) => bmp.close());
-            return;
-          }
-
-          const targetTime = frameCount > 1 ? (i / (frameCount - 1)) * safeDuration : 0;
-          video.currentTime = targetTime;
-
-          await new Promise<void>((resolve) => {
-            const onSeeked = () => {
-              video.removeEventListener('seeked', onSeeked);
-              resolve();
-            };
-            video.addEventListener('seeked', onSeeked);
-          });
-
-          if (isCancelled) {
-            extractedFrames.forEach((bmp) => bmp.close());
-            return;
-          }
-
-          let bitmap: ImageBitmap;
-          try {
-            bitmap = await createImageBitmap(video, {
-              resizeWidth: targetWidth,
-              resizeHeight: targetHeight,
-              resizeQuality: 'high',
-            });
-          } catch {
-            const frameCanvas = document.createElement('canvas');
-            frameCanvas.width = targetWidth;
-            frameCanvas.height = targetHeight;
-            frameCanvas.getContext('2d')?.drawImage(video, 0, 0, targetWidth, targetHeight);
-            bitmap = await createImageBitmap(frameCanvas);
-          }
-
-          extractedFrames.push(bitmap);
-          framesRef.current = extractedFrames;
-          if (extractedFrames.length === 1) {
-            lastDrawnIndexRef.current = -1;
-            setFramesReady(true);
-          }
-        }
-
-        if (!isCancelled) {
-          framesRef.current = extractedFrames;
-          lastDrawnIndexRef.current = -1; // Force redraw on canvas
-          setFramesReady(true);
-        } else {
-          extractedFrames.forEach((bmp) => bmp.close());
-        }
-      } catch (err: any) {
-        if (!isCancelled) {
-          console.warn('Frame pre-extraction failed or aborted:', err);
-        }
-      }
-    }
-
-    loadAndExtractFrames();
-
-    return () => {
-      isCancelled = true;
-      abortController.abort();
-      framesRef.current.forEach((bmp) => bmp.close());
-      framesRef.current = [];
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, [isMobile]);
-
-  // 2. Passive Scroll Listener & Calculation
   useEffect(() => {
     const handleScroll = () => {
       const scrollHeight = document.documentElement.scrollHeight;
@@ -177,81 +22,23 @@ export const ScrollVideo: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // 3. Canvas Sizing & Resize Listener
-  const resizeCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
-    const w = Math.round(canvas.clientWidth * dpr);
-    const h = Math.round(canvas.clientHeight * dpr);
-
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-      lastDrawnIndexRef.current = -1; // Trigger redraw
-    }
-  };
-
-  useEffect(() => {
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [isMobile]);
-
-  // 4. Animation Loop
   useEffect(() => {
     let animId: number;
+    let isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
 
     const render = () => {
-      // Smooth progress calculation
       const target = targetProgressRef.current;
-      smoothedProgressRef.current += (target - smoothedProgressRef.current) * 0.1;
+      // Faster smoothing on mobile to feel more responsive, smoother on desktop
+      smoothedProgressRef.current += (target - smoothedProgressRef.current) * (isMobile ? 0.2 : 0.08);
       const smoothed = smoothedProgressRef.current;
 
-      const frames = framesRef.current;
-      const canvas = canvasRef.current;
-
-      if (frames.length > 0 && canvas) {
-        // Redraw canvas with frames
-        const frameIndex = Math.min(
-          Math.max(Math.floor(smoothed * frames.length), 0),
-          frames.length - 1
-        );
-
-        if (frameIndex !== lastDrawnIndexRef.current) {
-          const ctx = canvas.getContext('2d');
-          const frame = frames[frameIndex];
-
-          if (ctx && frame) {
-            const cw = canvas.width;
-            const ch = canvas.height;
-            const fw = frame.width;
-            const fh = frame.height;
-
-            // Cover math: scale = max of canvas/frame ratios, center overflow
-            const scale = Math.max(cw / fw, ch / fh);
-            const drawW = fw * scale;
-            const drawH = fh * scale;
-            const dx = (cw - drawW) / 2;
-            const dy = (ch - drawH) / 2;
-
-            ctx.clearRect(0, 0, cw, ch);
-            ctx.drawImage(frame, dx, dy, drawW, drawH);
-            lastDrawnIndexRef.current = frameIndex;
-          }
-        }
-      } else if (fallbackVideoRef.current) {
-        // Scrub fallback video
-        const fallback = fallbackVideoRef.current;
-        if (fallback.duration && !Number.isNaN(fallback.duration)) {
-          const targetTime = smoothed * fallback.duration;
-          if (
-            !isSeekingRef.current &&
-            Math.abs(fallback.currentTime - targetTime) > 0.001
-          ) {
-            isSeekingRef.current = true;
-            fallback.currentTime = targetTime;
-          }
+      const video = videoRef.current;
+      if (video && video.readyState >= 2 && video.duration) {
+        const targetTime = smoothed * video.duration;
+        
+        if (!isSeekingRef.current && Math.abs(video.currentTime - targetTime) > 0.03) {
+          isSeekingRef.current = true;
+          video.currentTime = targetTime;
         }
       }
 
@@ -260,36 +47,25 @@ export const ScrollVideo: React.FC = () => {
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [isMobile]);
+  }, []);
 
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden bg-[#030611]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#132346_0%,#070b1b_48%,#020307_100%)]" />
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+      
+      <video
+        ref={videoRef}
+        src={VIDEO_URL}
+        muted
+        playsInline
+        preload="auto"
+        className="absolute inset-0 h-full w-full object-cover opacity-60 mix-blend-screen"
+        onSeeked={() => {
+          isSeekingRef.current = false;
+        }}
+      />
 
-      {!framesReady && (
-        <video
-          ref={fallbackVideoRef}
-          src={VIDEO_URL}
-          muted
-          playsInline
-          autoPlay={false}
-          preload="auto"
-          disablePictureInPicture
-          aria-hidden="true"
-          className="pointer-events-none absolute h-px w-px opacity-0"
-          onLoadedData={() => {
-            drawFallbackFrame();
-          }}
-          onSeeked={() => {
-            drawFallbackFrame();
-            isSeekingRef.current = false;
-          }}
-        />
-      )}
-
-      {/* Contrast overlay */}
-      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/60 to-black/90 pointer-events-none" />
     </div>
   );
 };

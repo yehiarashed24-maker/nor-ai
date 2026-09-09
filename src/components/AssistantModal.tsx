@@ -77,18 +77,6 @@ const getSpeechRecognitionConstructor = (): BrowserSpeechRecognitionConstructor 
   return browser.SpeechRecognition || browser.webkitSpeechRecognition || null;
 };
 
-const getRecorderOptions = (): MediaRecorderOptions | undefined => {
-  const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'];
-  const mimeType = types.find((type) => MediaRecorder.isTypeSupported(type));
-  return mimeType ? { mimeType, audioBitsPerSecond: 64000 } : undefined;
-};
-
-const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(blob);
-});
 
 const labels = {
   ar: {
@@ -116,27 +104,14 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const text = labels[lang];
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const vadFrameRef = useRef<number | null>(null);
   const activeRef = useRef(false);
   const listeningRef = useRef(false);
   const loadingRef = useRef(false);
-  const speechDetectedRef = useRef(false);
-  const finalizingRef = useRef(false);
-  const preRollRef = useRef<Blob[]>([]);
-  const speechChunksRef = useRef<Blob[]>([]);
-  const voiceStartedAtRef = useRef(0);
-  const silenceStartedAtRef = useRef(0);
-  const loudFramesRef = useRef(0);
-  const noiseFloorRef = useRef(0.01);
-  const calibrateUntilRef = useRef(0);
   const speechTokenRef = useRef(0);
   const speechFallbackRef = useRef<number | null>(null);
   const startListeningRef = useRef<() => void>(() => {});
-  const processVoiceRef = useRef<(blob: Blob) => void>(() => {});
   const [cameraOn, setCameraOn] = useState(false);
   const [listening, setListening] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -147,14 +122,15 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch {}
+      try {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
     }
     listeningRef.current = false;
-    speechDetectedRef.current = false;
-    finalizingRef.current = false;
-    preRollRef.current = [];
-    speechChunksRef.current = [];
-    loudFramesRef.current = 0;
     setListening(false);
   };
 
@@ -163,21 +139,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       void audioContextRef.current.resume();
     }
     if (listening) {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch {}
-        stopListening();
-        return;
-      }
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        speechDetectedRef.current = true;
-        finalizingRef.current = true;
-        listeningRef.current = false;
-        setListening(false);
-        setStatus(text.heard);
-        recorderRef.current.requestData();
-        return;
-      }
       stopListening();
+      setStatus(text.readyAgain);
     } else {
       startListening();
     }
@@ -187,17 +150,12 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     stopListening();
     const output = getSharedSpeechAudio();
     output?.pause();
-    if (vadFrameRef.current !== null) window.cancelAnimationFrame(vadFrameRef.current);
-    vadFrameRef.current = null;
-    if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop();
-    recorderRef.current = null;
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch {}
       recognitionRef.current = null;
     }
     void audioContextRef.current?.close();
     audioContextRef.current = null;
-    analyserRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -208,15 +166,32 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     stopListening();
     const token = ++speechTokenRef.current;
     if (speechFallbackRef.current !== null) window.clearTimeout(speechFallbackRef.current);
-    getSharedSpeechAudio()?.pause();
+    const prevAudio = getSharedSpeechAudio();
+    if (prevAudio) {
+      prevAudio.pause();
+      prevAudio.onended = null;
+      prevAudio.onerror = null;
+    }
     let finished = false;
     const finish = () => {
       if (finished || token !== speechTokenRef.current) return;
       finished = true;
       if (speechFallbackRef.current !== null) window.clearTimeout(speechFallbackRef.current);
       speechFallbackRef.current = null;
+      const audio = getSharedSpeechAudio();
+      if (audio) {
+        audio.onended = null;
+        audio.onerror = null;
+      }
       onFinished?.();
     };
+
+    // Global safety watchdog: guarantees the assistant never gets stuck in speaking state
+    const estimatedDuration = Math.min(25000, Math.max(3500, value.length * (lang === 'ar' ? 85 : 70) + 2000));
+    speechFallbackRef.current = window.setTimeout(() => {
+      console.warn('Speech playback watchdog timeout fired');
+      finish();
+    }, estimatedDuration);
 
     const speakWithDevice = () => {
       if (finished || token !== speechTokenRef.current) return;
@@ -233,8 +208,6 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       utterance.onend = finish;
       utterance.onerror = finish;
       try { window.speechSynthesis.speak(utterance); } catch { finish(); }
-      const estimatedDuration = Math.min(12000, Math.max(1800, value.length * (lang === 'ar' ? 62 : 55)));
-      speechFallbackRef.current = window.setTimeout(finish, estimatedDuration + 1200);
     };
 
     if (lang !== 'ar') {
@@ -305,6 +278,18 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     setLoading(true);
     setAnswer('');
     setStatus(text.thinking);
+
+    // Watchdog timer: prevent UI from freezing if the serverless function hangs
+    const watchdog = window.setTimeout(() => {
+      if (loadingRef.current) {
+        console.warn('Assist API watchdog timeout');
+        loadingRef.current = false;
+        setLoading(false);
+        setStatus(text.apiError);
+        window.setTimeout(() => startListeningRef.current(), 1000);
+      }
+    }, 25000);
+
     try {
       const saved = JSON.parse(localStorage.getItem(memoryKey) || '[]');
       const memories = Array.isArray(saved) ? saved : [];
@@ -313,6 +298,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: typedQuestion, audio, image, language: lang, memories, context: assistContext }),
       });
+      window.clearTimeout(watchdog);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setAnswer(data.answer);
@@ -329,10 +315,11 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         if (data.action?.type === 'CALL') {
           window.location.href = 'tel:123456789';
         } else {
-          window.setTimeout(() => startListeningRef.current(), 350);
+          window.setTimeout(() => startListeningRef.current(), 400);
         }
       });
     } catch {
+      window.clearTimeout(watchdog);
       loadingRef.current = false;
       setLoading(false);
       setStatus(text.apiError);
@@ -340,163 +327,72 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     }
   };
 
-  const processVoice = async (blob: Blob) => {
-    if (blob.size < 500) {
-      startListeningRef.current();
-      return;
-    }
-    setStatus(text.heard);
-    try {
-      const audio = await blobToDataUrl(blob);
-      await sendRequest({ audio });
-    } catch {
-      setStatus(text.apiError);
-      startListeningRef.current();
-    }
-  };
-  useEffect(() => { processVoiceRef.current = (blob) => void processVoice(blob); });
-
   const startListening = () => {
     if (!activeRef.current || loadingRef.current || !streamRef.current) return;
+
+    if (audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
+
     listeningRef.current = true;
-    speechDetectedRef.current = false;
-    finalizingRef.current = false;
-    preRollRef.current = [];
-    speechChunksRef.current = [];
-    voiceStartedAtRef.current = 0;
-    silenceStartedAtRef.current = 0;
-    loudFramesRef.current = 0;
-    calibrateUntilRef.current = performance.now() + 700;
     setListening(true);
     setStatus(text.listening);
+
+    // Clean up any previous recognition instance
     if (recognitionRef.current) {
       try {
-        recognitionRef.current.start();
-      } catch {
-        // A duplicate start is harmless; the active recognizer will finish.
-      }
-      return;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
     }
-    if (!recorderRef.current) return;
+
+    const Recognition = getSpeechRecognitionConstructor();
+    if (Recognition) {
+      try {
+        const recognition = new Recognition();
+        recognition.lang = lang === 'ar' ? 'ar-EG' : 'en-US';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[0]?.[0]?.transcript?.trim();
+          if (!transcript) return;
+          stopListening();
+          setQuestion(transcript);
+          setStatus(text.heard);
+          void sendRequest({ typedQuestion: transcript });
+        };
+
+        recognition.onerror = (event) => {
+          console.warn('SpeechRecognition error:', event.error);
+        };
+
+        recognition.onend = () => {
+          // If browser speech recognition ends (e.g. 3-second silence timeout in Safari/Chrome),
+          // auto-restart listening so the assistant never goes deaf or hangs:
+          if (activeRef.current && listeningRef.current && !loadingRef.current) {
+            window.setTimeout(() => {
+              if (activeRef.current && listeningRef.current && !loadingRef.current) {
+                startListeningRef.current();
+              }
+            }, 300);
+          }
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+        return;
+      } catch (err) {
+        console.warn('SpeechRecognition start failed, VAD fallback active:', err);
+        recognitionRef.current = null;
+      }
+    }
   };
   useEffect(() => { startListeningRef.current = startListening; });
-
-  const setupAudioCapture = (stream: MediaStream) => {
-    if (typeof MediaRecorder === 'undefined') {
-      setStatus(text.noRecorder);
-      return;
-    }
-    const audioTrack = stream.getAudioTracks()[0];
-    if (!audioTrack) {
-      setStatus(text.noRecorder);
-      return;
-    }
-    const audioStream = new MediaStream([audioTrack]);
-    const recorder = new MediaRecorder(audioStream, getRecorderOptions());
-    recorderRef.current = recorder;
-    let headerChunk: Blob | null = null;
-    recorder.ondataavailable = (event) => {
-      if (!event.data.size) return;
-      if (!headerChunk) headerChunk = event.data;
-      if (speechDetectedRef.current) speechChunksRef.current.push(event.data);
-      else if (listeningRef.current) preRollRef.current = [...preRollRef.current.slice(-3), event.data];
-      if (finalizingRef.current) {
-        finalizingRef.current = false;
-        const middleChunks = speechChunksRef.current.length > 0 ? speechChunksRef.current : preRollRef.current;
-        const chunks = headerChunk && !middleChunks.includes(headerChunk)
-          ? [headerChunk, ...middleChunks]
-          : middleChunks;
-        const type = recorder.mimeType || event.data.type || 'audio/webm';
-        speechChunksRef.current = [];
-        preRollRef.current = [];
-        processVoiceRef.current(new Blob(chunks, { type }));
-      }
-    };
-    recorder.start(250);
-
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 1024;
-    analyser.smoothingTimeConstant = 0.2;
-    audioContext.createMediaStreamSource(audioStream).connect(analyser);
-    audioContextRef.current = audioContext;
-    analyserRef.current = analyser;
-    void audioContext.resume();
-    const samples = new Float32Array(analyser.fftSize);
-
-    const monitor = () => {
-      if (!activeRef.current || analyserRef.current !== analyser) return;
-      if (!recognitionRef.current && listeningRef.current && !loadingRef.current && !finalizingRef.current) {
-        analyser.getFloatTimeDomainData(samples);
-        let energy = 0;
-        for (const sample of samples) energy += sample * sample;
-        const level = Math.sqrt(energy / samples.length);
-        const now = performance.now();
-        if (now < calibrateUntilRef.current && !speechDetectedRef.current) {
-          noiseFloorRef.current = Math.max(0.004, noiseFloorRef.current * 0.85 + level * 0.15);
-        }
-        const speechThreshold = Math.max(0.018, noiseFloorRef.current * 2.6);
-        const silenceThreshold = Math.max(0.012, noiseFloorRef.current * 1.6);
-
-        if (!speechDetectedRef.current) {
-          loudFramesRef.current = level > speechThreshold ? loudFramesRef.current + 1 : 0;
-          if (now >= calibrateUntilRef.current && loudFramesRef.current >= 3) {
-            speechDetectedRef.current = true;
-            speechChunksRef.current = [...preRollRef.current];
-            preRollRef.current = [];
-            voiceStartedAtRef.current = now;
-            silenceStartedAtRef.current = 0;
-            setStatus(text.listening);
-          }
-        } else if (level < silenceThreshold) {
-          if (!silenceStartedAtRef.current) silenceStartedAtRef.current = now;
-          const spokeLongEnough = now - voiceStartedAtRef.current > 350;
-          if (spokeLongEnough && now - silenceStartedAtRef.current > 850) {
-            listeningRef.current = false;
-            setListening(false);
-            finalizingRef.current = true;
-            setStatus(text.heard);
-            recorder.requestData();
-          }
-        } else {
-          silenceStartedAtRef.current = 0;
-        }
-      }
-      vadFrameRef.current = window.requestAnimationFrame(monitor);
-    };
-    vadFrameRef.current = window.requestAnimationFrame(monitor);
-  };
-
-  const setupFastRecognition = () => {
-    const Recognition = getSpeechRecognitionConstructor();
-    if (!Recognition) return;
-    const recognition = new Recognition();
-    recognition.lang = lang === 'ar' ? 'ar-EG' : 'en-US';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript?.trim();
-      if (!transcript) return;
-      listeningRef.current = false;
-      setListening(false);
-      setQuestion(transcript);
-      setStatus(text.heard);
-      void sendRequest({ typedQuestion: transcript });
-    };
-    recognition.onerror = (event) => {
-      // Permission/network failures use the proven recorder fallback instead.
-      if (event.error !== 'aborted') recognitionRef.current = null;
-    };
-    recognition.onend = () => {
-      if (!loadingRef.current) {
-        listeningRef.current = false;
-        setListening(false);
-        setStatus(text.readyAgain);
-      }
-    };
-    recognitionRef.current = recognition;
-  };
 
   const startAssistant = async () => {
     try {
@@ -519,8 +415,6 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
           // Ignore autoplay restriction so assistant continues normally
         }
       }
-      setupAudioCapture(stream);
-      setupFastRecognition();
       setCameraOn(true);
       setStatus(text.ready);
       speak(text.ready, () => startListeningRef.current());

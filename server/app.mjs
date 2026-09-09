@@ -36,10 +36,10 @@ app.post('/api/speech', async (request, response) => {
   const text = typeof request.body?.text === 'string' ? request.body.text.trim().slice(0, 800) : '';
   if (!text) return response.status(400).json({ error: 'Text is required.' });
 
-  const key = process.env.AZURE_SPEECH_KEY;
+  const keys = [process.env.AZURE_SPEECH_KEY, process.env.AZURE_SPEECH_KEY_SECONDARY].filter(Boolean);
   const region = process.env.AZURE_SPEECH_REGION;
   const voice = process.env.AZURE_SPEECH_VOICE || 'ar-EG-SalmaNeural';
-  if (!key || !region) {
+  if (keys.length === 0 || !region) {
     return response.status(503).json({ error: 'Azure Speech is not configured.' });
   }
 
@@ -51,33 +51,39 @@ app.post('/api/speech', async (request, response) => {
     .replace(/'/g, '&apos;');
   const ssml = `<speak version="1.0" xml:lang="ar-EG"><voice name="${voice}">${escapedText}</voice></speak>`;
 
-  try {
-    const azureResponse = await fetch(
-      `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`,
-      {
-        method: 'POST',
-        headers: {
-          'Ocp-Apim-Subscription-Key': key,
-          'Content-Type': 'application/ssml+xml',
-          'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-          'User-Agent': 'NOR-AI',
+  let lastError = null;
+  for (const key of keys) {
+    try {
+      const azureResponse = await fetch(
+        `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`,
+        {
+          method: 'POST',
+          headers: {
+            'Ocp-Apim-Subscription-Key': key,
+            'Content-Type': 'application/ssml+xml',
+            'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+            'User-Agent': 'NOR-AI',
+          },
+          body: ssml,
         },
-        body: ssml,
-      },
-    );
-    if (!azureResponse.ok) {
-      throw new Error(`Azure Speech returned ${azureResponse.status}`);
+      );
+      if (!azureResponse.ok) {
+        throw new Error(`Azure Speech returned ${azureResponse.status}`);
+      }
+
+      const audio = Buffer.from(await azureResponse.arrayBuffer()).toString('base64');
+      if (!audio) throw new Error('Azure Speech returned empty audio');
+
+      response.set('Cache-Control', 'no-store');
+      return response.json({ audio: `data:audio/mpeg;base64,${audio}` });
+    } catch (error) {
+      lastError = error;
+      console.warn('Azure Speech attempt failed, trying next key if available:', error.message);
     }
-
-    const audio = Buffer.from(await azureResponse.arrayBuffer()).toString('base64');
-    if (!audio) throw new Error('Azure Speech returned empty audio');
-
-    response.set('Cache-Control', 'no-store');
-    return response.json({ audio: `data:audio/mpeg;base64,${audio}` });
-  } catch (error) {
-    console.error('Arabic TTS failed:', error);
-    return response.status(502).json({ error: 'Arabic voice generation failed.' });
   }
+
+  console.error('Arabic TTS failed:', lastError);
+  return response.status(502).json({ error: 'Arabic voice generation failed.' });
 });
 
 app.post('/api/assist', async (request, response) => {

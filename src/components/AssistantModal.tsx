@@ -105,6 +105,8 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeRef = useRef(false);
   const listeningRef = useRef(false);
@@ -130,6 +132,10 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       } catch {}
       recognitionRef.current = null;
     }
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch {}
+      recorderRef.current = null;
+    }
     listeningRef.current = false;
     setListening(false);
   };
@@ -150,6 +156,10 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     stopListening();
     const output = getSharedSpeechAudio();
     output?.pause();
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch {}
+      recorderRef.current = null;
+    }
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch {}
       recognitionRef.current = null;
@@ -349,6 +359,12 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       recognitionRef.current = null;
     }
 
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try { recorderRef.current.stop(); } catch {}
+      recorderRef.current = null;
+    }
+
+    let speechRecognitionActive = false;
     const Recognition = getSpeechRecognitionConstructor();
     if (Recognition) {
       try {
@@ -372,8 +388,6 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         };
 
         recognition.onend = () => {
-          // If browser speech recognition ends (e.g. 3-second silence timeout in Safari/Chrome),
-          // auto-restart listening so the assistant never goes deaf or hangs:
           if (activeRef.current && listeningRef.current && !loadingRef.current) {
             window.setTimeout(() => {
               if (activeRef.current && listeningRef.current && !loadingRef.current) {
@@ -385,10 +399,44 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
         recognition.start();
         recognitionRef.current = recognition;
-        return;
+        speechRecognitionActive = true;
       } catch (err) {
-        console.warn('SpeechRecognition start failed, VAD fallback active:', err);
+        console.warn('SpeechRecognition start failed, using MediaRecorder fallback:', err);
         recognitionRef.current = null;
+      }
+    }
+
+    // Fallback: Start MediaRecorder (for iOS standalone PWA, Firefox, or when SpeechRecognition is not permitted)
+    if (!speechRecognitionActive && streamRef.current && typeof MediaRecorder !== 'undefined') {
+      try {
+        const audioTrack = streamRef.current.getAudioTracks()[0];
+        if (audioTrack) {
+          const mimeTypes = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/aac'];
+          const mimeType = mimeTypes.find((t) => MediaRecorder.isTypeSupported(t));
+          const recorder = new MediaRecorder(new MediaStream([audioTrack]), mimeType ? { mimeType } : undefined);
+          audioChunksRef.current = [];
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+          };
+          recorder.onstop = () => {
+            if (audioChunksRef.current.length > 0 && activeRef.current) {
+              const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/mp4' });
+              audioChunksRef.current = [];
+              if (blob.size > 1000) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const audioDataUrl = String(reader.result);
+                  void sendRequest({ audio: audioDataUrl });
+                };
+                reader.readAsDataURL(blob);
+              }
+            }
+          };
+          recorder.start();
+          recorderRef.current = recorder;
+        }
+      } catch (e) {
+        console.warn('MediaRecorder fallback start failed:', e);
       }
     }
   };
@@ -398,10 +446,22 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     try {
       stopMedia();
       setStatus(text.starting);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
+      } catch {
+        // Fallback for strict mobile devices / mobile Safari
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: true,
+        }).catch(() => {
+          return navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        });
+      }
+
       if (!activeRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -409,6 +469,9 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', '');
+        videoRef.current.setAttribute('webkit-playsinline', '');
+        videoRef.current.muted = true;
         try {
           await videoRef.current.play();
         } catch {

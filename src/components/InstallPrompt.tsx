@@ -23,7 +23,7 @@ export const InstallPrompt: React.FC = () => {
 
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return sessionStorage.getItem('nor_pwa_dismissed') === 'true';
+    return sessionStorage.getItem('nor_pwa_dismissed_v2') === 'true';
   });
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export const InstallPrompt: React.FC = () => {
 
   const handleDismiss = () => {
     setDismissed(true);
-    sessionStorage.setItem('nor_pwa_dismissed', 'true');
+    sessionStorage.setItem('nor_pwa_dismissed_v2', 'true');
   };
 
   if (isStandalone || dismissed) return null;

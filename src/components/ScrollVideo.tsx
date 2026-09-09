@@ -4,67 +4,21 @@ const VIDEO_URL = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIX
 
 export const ScrollVideo: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const targetProgressRef = useRef(0);
-  const smoothedProgressRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
   const isSeekingRef = useRef(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  });
+  const pendingTimeRef = useRef<number | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-    };
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    const mediaQuery = window.matchMedia('(max-width: 768px), (pointer: coarse)');
+    const updateDevice = () => setIsMobile(mediaQuery.matches);
+    updateDevice();
+    mediaQuery.addEventListener('change', updateDevice);
+    return () => mediaQuery.removeEventListener('change', updateDevice);
   }, []);
 
-  // Desktop only: scroll scrubbing
-  useEffect(() => {
-    if (isMobile) return;
-
-    const handleScroll = () => {
-      const scrollHeight = document.documentElement.scrollHeight;
-      const innerHeight = window.innerHeight;
-      const maxScroll = scrollHeight - innerHeight;
-      const progress = maxScroll > 0 ? window.scrollY / maxScroll : 0;
-      targetProgressRef.current = Math.min(Math.max(progress, 0), 1);
-    };
-
-    handleScroll();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-
-    let animId: number;
-    const render = () => {
-      const target = targetProgressRef.current;
-      smoothedProgressRef.current += (target - smoothedProgressRef.current) * 0.08;
-      const smoothed = smoothedProgressRef.current;
-
-      const video = videoRef.current;
-      if (video && video.readyState >= 2 && video.duration) {
-        const targetTime = smoothed * video.duration;
-
-        if (!isSeekingRef.current && Math.abs(video.currentTime - targetTime) > 0.03) {
-          isSeekingRef.current = true;
-          video.currentTime = targetTime;
-        }
-      }
-
-      animId = requestAnimationFrame(render);
-    };
-
-    animId = requestAnimationFrame(render);
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      cancelAnimationFrame(animId);
-    };
-  }, [isMobile]);
-
-  // Video initialization and guaranteed play without play button
+  // Phone/tablet: play the background normally. Desktop: map scroll position to
+  // video time. The seek runs only once per painted scroll frame, never in a loop.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -72,60 +26,87 @@ export const ScrollVideo: React.FC = () => {
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
-    video.controls = false;
     video.setAttribute('muted', '');
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
-    video.removeAttribute('controls');
 
-    const startPlaying = () => {
-      if (video) {
+    if (isMobile) {
+      const play = () => {
         video.muted = true;
-        const playPromise = video.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => setIsPlaying(true))
-            .catch(() => {});
-        }
+        void video.play().catch(() => {
+          // A browser may delay autoplay until the first user interaction.
+        });
+      };
+
+      play();
+      window.addEventListener('pointerdown', play, { passive: true, once: true });
+      return () => window.removeEventListener('pointerdown', play);
+    }
+
+    video.pause();
+    video.loop = false;
+
+    const applySeek = () => {
+      frameRef.current = null;
+      const duration = video.duration;
+      const nextTime = pendingTimeRef.current;
+      if (!Number.isFinite(duration) || !nextTime || isSeekingRef.current) return;
+
+      if (Math.abs(video.currentTime - nextTime) < 0.04) return;
+      isSeekingRef.current = true;
+      video.currentTime = nextTime;
+    };
+
+    const updateFromScroll = () => {
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = maxScroll > 0 ? Math.min(Math.max(window.scrollY / maxScroll, 0), 1) : 0;
+      if (Number.isFinite(video.duration)) pendingTimeRef.current = progress * video.duration;
+
+      if (frameRef.current === null) {
+        frameRef.current = requestAnimationFrame(applySeek);
       }
     };
 
-    startPlaying();
+    const onSeeked = () => {
+      isSeekingRef.current = false;
+      if (pendingTimeRef.current !== null && Math.abs(video.currentTime - pendingTimeRef.current) >= 0.04) {
+        updateFromScroll();
+      }
+    };
 
-    window.addEventListener('touchstart', startPlaying, { passive: true, once: true });
-    window.addEventListener('scroll', startPlaying, { passive: true, once: true });
-    window.addEventListener('click', startPlaying, { passive: true, once: true });
+    video.addEventListener('loadedmetadata', updateFromScroll, { once: true });
+    video.addEventListener('seeked', onSeeked);
+    window.addEventListener('scroll', updateFromScroll, { passive: true });
+    window.addEventListener('resize', updateFromScroll, { passive: true });
+    updateFromScroll();
 
     return () => {
-      window.removeEventListener('touchstart', startPlaying);
-      window.removeEventListener('scroll', startPlaying);
-      window.removeEventListener('click', startPlaying);
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      isSeekingRef.current = false;
+      video.removeEventListener('loadedmetadata', updateFromScroll);
+      video.removeEventListener('seeked', onSeeked);
+      window.removeEventListener('scroll', updateFromScroll);
+      window.removeEventListener('resize', updateFromScroll);
     };
-  }, []);
+  }, [isMobile]);
 
   return (
-    <div className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden pointer-events-none select-none">
+    <div aria-hidden="true" className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden pointer-events-none">
       <video
         ref={videoRef}
         src={VIDEO_URL}
         muted
         playsInline
         webkit-playsinline="true"
-        autoPlay
+        autoPlay={isMobile}
         loop
-        preload="auto"
+        preload="metadata"
         disablePictureInPicture
         disableRemotePlayback
-        onPlaying={() => setIsPlaying(true)}
-        onSeeked={() => {
-          isSeekingRef.current = false;
-        }}
-        className={`absolute inset-0 h-full w-full object-cover pointer-events-none select-none transition-opacity duration-700 ${
-          isMobile && !isPlaying ? 'opacity-0' : 'opacity-100'
-        }`}
-        style={{ pointerEvents: 'none' }}
+        className="absolute inset-0 h-full w-full object-cover"
       />
-      <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+      <div className="absolute inset-0 bg-black/20" />
     </div>
   );
 };

@@ -13,9 +13,7 @@ html,
 body {
   min-height: 100vh;
   min-height: 100dvh;
-  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
 }
 
 body {
@@ -63,4 +61,3 @@ video::-webkit-media-controls-panel,
   visibility: hidden !important;
   pointer-events: none !important;
 }
-

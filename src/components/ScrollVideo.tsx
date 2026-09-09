@@ -50,7 +50,7 @@ export const ScrollVideo: React.FC = () => {
       frameRef.current = null;
       const duration = video.duration;
       const nextTime = pendingTimeRef.current;
-      if (!Number.isFinite(duration) || !nextTime || isSeekingRef.current) return;
+      if (!Number.isFinite(duration) || nextTime === null || isSeekingRef.current) return;
 
       if (Math.abs(video.currentTime - nextTime) < 0.04) return;
       isSeekingRef.current = true;
@@ -92,7 +92,7 @@ export const ScrollVideo: React.FC = () => {
   }, [isMobile]);
 
   return (
-    <div aria-hidden="true" className="fixed inset-0 -z-10 bg-[#0a0a0a] overflow-hidden pointer-events-none">
+    <div aria-hidden="true" className="fixed inset-0 z-0 bg-[#0a0a0a] overflow-hidden pointer-events-none">
       <video
         ref={videoRef}
         src={VIDEO_URL}

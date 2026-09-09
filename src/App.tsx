@@ -24,10 +24,10 @@ export const App: React.FC = () => {
 
   return (
     <LanguageProvider>
-      <div className="relative selection:bg-white/20 transition-all duration-300">
+      <div className="relative isolate selection:bg-white/20 transition-all duration-300">
         <ScrollVideo />
         <Navbar />
-        <main>
+        <main className="relative z-10">
           <SectionOne onOpenAssistant={handleOpenAssistant} />
           <div aria-hidden="true" className="h-[80vh]" />
           <SectionTwo onOpenAssistant={handleOpenAssistant} />

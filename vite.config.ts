@@ -8,17 +8,23 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      includeAssets: ['favicon.png', 'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'],
+      manifestFilename: 'manifest.json',
+      includeAssets: ['favicon.png', 'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'icon-maskable.png'],
       manifest: {
         name: "NOR AI — مساعد نور الذكي",
         short_name: "NOR AI",
-        description: "Voice-first visual assistance for blind and visually impaired users",
+        description: "Voice-first visual assistance for blind and visually impaired users — A clearer world for brighter lives",
         theme_color: "#050816",
         background_color: "#050816",
         display: "standalone",
+        display_override: ["standalone", "window-controls-overlay"],
         start_url: "/",
         id: "/",
+        scope: "/",
         orientation: "portrait",
+        lang: "ar",
+        dir: "rtl",
+        categories: ["accessibility", "utilities", "lifestyle"],
         icons: [
           {
             src: "/icon-192.png",
@@ -28,6 +34,17 @@ export default defineConfig({
           {
             src: "/icon-512.png",
             sizes: "512x512",
+            type: "image/png"
+          },
+          {
+            src: "/icon-maskable.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable"
+          },
+          {
+            src: "/favicon.png",
+            sizes: "64x64",
             type: "image/png"
           }
         ]

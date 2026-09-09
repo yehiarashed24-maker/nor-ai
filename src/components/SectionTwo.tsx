@@ -51,23 +51,9 @@ export const SectionTwo: React.FC<{ onOpenAssistant: () => void }> = ({ onOpenAs
         </Reveal>
       </div>
 
-      {/* Absolute Bottom-Start Share */}
-      <Reveal delay={700} className="absolute bottom-5 start-5 sm:bottom-6 sm:start-8 md:start-12 z-20">
-        <button
-          type="button"
-          aria-label={t.shareAria}
-          className="text-white/80 transition-colors duration-300 hover:text-white cursor-pointer"
-          onClick={() => {
-            if (navigator.share) {
-              navigator.share({
-                title: 'NOR_AI',
-                url: window.location.href,
-              }).catch(() => {});
-            }
-          }}
-        >
-          <Share2 size={18} />
-        </button>
+      {/* Absolute Bottom-Center Arrow */}
+      <Reveal delay={760} className="absolute bottom-5 left-1/2 -translate-x-1/2 sm:bottom-6 z-20 pointer-events-none">
+        <ArrowDown size={18} className="animate-bounce text-white/80" />
       </Reveal>
     </section>
   );

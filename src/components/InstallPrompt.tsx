@@ -63,7 +63,7 @@ export const InstallPrompt: React.FC = () => {
       installBtn: 'تثبيت التطبيق',
       close: 'إغلاق',
       iosTitle: 'خطوات التثبيت على الهاتف',
-      iosStep1: 'اضغط على زر المشاركة أسفل شاشة المتصفح',
+      iosStep1: 'اضغط على زر المشاركة (Share) في شريط سفاري أسفل الشاشة',
       iosStep2: 'مرر للأسفل واختر «إضافة إلى الشاشة الرئيسية»',
       iosStep3: 'اضغط «إضافة» وستجد أيقونة نور AI على شاشتك فوراً!',
       gotIt: 'فهمت',
@@ -75,7 +75,7 @@ export const InstallPrompt: React.FC = () => {
       installBtn: 'Install App',
       close: 'Close',
       iosTitle: 'How to install on your phone',
-      iosStep1: 'Tap the Share button in your browser toolbar',
+      iosStep1: 'Tap the Share button in the Safari toolbar at the bottom',
       iosStep2: 'Scroll down and tap «Add to Home Screen»',
       iosStep3: 'Tap «Add» in top right and launch NOR AI anytime!',
       gotIt: 'Got it',
@@ -85,7 +85,7 @@ export const InstallPrompt: React.FC = () => {
   return (
     <>
       {/* Floating Install Notification / Banner */}
-      <div className="fixed bottom-24 end-4 start-4 z-[999] sm:bottom-6 sm:end-auto sm:start-8 sm:max-w-md">
+      <div className="fixed bottom-6 end-4 start-4 z-[999] sm:bottom-6 sm:end-auto sm:start-8 sm:max-w-md">
         <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/20 bg-[#0e0e0e]/95 p-3 shadow-2xl backdrop-blur-xl transition-all sm:gap-4 sm:p-4">
           <div className="flex items-center gap-3.5 min-w-0">
             <img

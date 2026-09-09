@@ -25,7 +25,7 @@ export const primeSpeechAudio = () => {
   const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   audio.volume = 0;
   audio.src = url;
-  void audio.play().catch(() => {}).finally(() => {
+  void audio.play().catch(() => { }).finally(() => {
     audio.volume = 1;
     URL.revokeObjectURL(url);
   });
@@ -112,7 +112,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
   const loadingRef = useRef(false);
   const speechTokenRef = useRef(0);
   const speechFallbackRef = useRef<number | null>(null);
-  const startListeningRef = useRef<() => void>(() => {});
+  const startListeningRef = useRef<() => void>(() => { });
 
   const [cameraOn, setCameraOn] = useState(false);
   const [listening, setListening] = useState(false);
@@ -169,7 +169,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
       try {
         recorderRef.current.stop();
-      } catch {}
+      } catch { }
     }
     isRecordingRef.current = false;
     recorderRef.current = null;
@@ -271,7 +271,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
         finish();
         return;
       }
-      try { window.speechSynthesis.resume(); } catch {}
+      try { window.speechSynthesis.resume(); } catch { }
       const utterance = new SpeechSynthesisUtterance(value);
       const voice = selectVoice(lang);
       if (voice) utterance.voice = voice;
@@ -305,7 +305,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
       })
       .then((data) => {
         if (token !== speechTokenRef.current || !data.audio) return fallback();
-        
+
         const audioUrls = Array.isArray(data.audio) ? data.audio : [data.audio];
         if (audioUrls.length === 0) return fallback();
 
@@ -324,7 +324,7 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
           audio.onerror = fallback;
           void audio.play().catch(fallback);
         };
-        
+
         playNext();
       })
       .catch(fallback);
@@ -598,16 +598,15 @@ export const AssistantModal: React.FC<{ open: boolean; onClose: () => void }> = 
 
           <div className="mt-auto flex flex-none items-center gap-2 rounded-full border border-white/20 bg-white/5 p-2 ps-4">
             <input value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submitTyped(); }} placeholder={text.ask} className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-white/40 text-white" />
-            
+
             {/* Microphone Button with Real-Time Audio Level Visualizer */}
             <button
               type="button"
               onClick={toggleListening}
               disabled={loading || !cameraOn}
               aria-label={listening ? text.stop : text.listen}
-              className={`relative rounded-full p-3 transition-all cursor-pointer ${
-                listening ? 'bg-red-500 text-white shadow-lg shadow-red-500/50' : 'bg-white/10 hover:bg-white hover:text-black text-white'
-              } disabled:opacity-30`}
+              className={`relative rounded-full p-3 transition-all cursor-pointer ${listening ? 'bg-red-500 text-white shadow-lg shadow-red-500/50' : 'bg-white/10 hover:bg-white hover:text-black text-white'
+                } disabled:opacity-30`}
             >
               {listening && audioLevel > 0.05 && (
                 <span

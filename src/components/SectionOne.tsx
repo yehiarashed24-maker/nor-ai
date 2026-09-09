@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowDown, Share2 } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { Reveal } from './Reveal';
 import { useLanguage } from '../context/LanguageContext';
 

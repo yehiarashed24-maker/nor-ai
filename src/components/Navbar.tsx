@@ -9,7 +9,7 @@ export const Navbar: React.FC = () => {
   return (
     <header>
       {/* Top start (left in LTR, right in RTL) */}
-      <div className="fixed start-5 top-5 z-50 sm:start-8 sm:top-7 md:start-12">
+      <div className="fixed start-5 top-[max(env(safe-area-inset-top,1.5rem),1.5rem)] z-50 sm:start-8 sm:top-8 md:start-12">
         <Reveal>
           <a
             href="#"
@@ -31,7 +31,7 @@ export const Navbar: React.FC = () => {
       </div>
 
       {/* Top end (right in LTR, left in RTL) */}
-      <nav className="fixed end-5 top-5 z-50 sm:end-8 sm:top-7 md:end-12">
+      <nav className="fixed end-5 top-[max(env(safe-area-inset-top,1.5rem),1.5rem)] z-50 sm:end-8 sm:top-8 md:end-12">
         {/* Language Switcher */}
         <div className="flex justify-end mb-3 sm:mb-4">
           <Reveal delay={80}>

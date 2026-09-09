@@ -5,6 +5,7 @@ import { Navbar } from './components/Navbar';
 import { SectionOne } from './components/SectionOne';
 import { SectionTwo } from './components/SectionTwo';
 import { AssistantModal, primeSpeechAudio } from './components/AssistantModal';
+import { InstallPrompt } from './components/InstallPrompt';
 
 export const App: React.FC = () => {
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -33,6 +34,7 @@ export const App: React.FC = () => {
           <SectionTwo onOpenAssistant={handleOpenAssistant} />
         </main>
         <AssistantModal open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        <InstallPrompt />
       </div>
     </LanguageProvider>
   );

@@ -179,6 +179,10 @@ npm run dev
 GEMINI_API_KEY=your_key
 GEMINI_MODEL=gemini-3.6-flash
 PORT=8787
+AZURE_SPEECH_KEY=your_azure_speech_key
+AZURE_SPEECH_REGION=your_azure_resource_region
+# اختياري؛ هذا هو الافتراضي.
+AZURE_SPEECH_VOICE=ar-EG-SalmaNeural
 # اختياري أثناء التطوير؛ Gemini يتولى التفريغ كحل احتياطي إن لم يكن مضبوطًا.
 WHISPER_API_URL=http://localhost:8000
 # استخدم رمزًا قويًا عند نشر خدمة Whisper خارج الشبكة الخاصة.

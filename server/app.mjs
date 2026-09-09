@@ -32,22 +32,48 @@ const pcmToWavDataUrl = (pcmBase64, sampleRate = 24_000) => {
   return `data:audio/wav;base64,${Buffer.concat([header, pcm]).toString('base64')}`;
 };
 
-import * as googleTTS from 'google-tts-api';
-
 app.post('/api/speech', async (request, response) => {
   const text = typeof request.body?.text === 'string' ? request.body.text.trim().slice(0, 800) : '';
   if (!text) return response.status(400).json({ error: 'Text is required.' });
 
+  const key = process.env.AZURE_SPEECH_KEY;
+  const region = process.env.AZURE_SPEECH_REGION;
+  const voice = process.env.AZURE_SPEECH_VOICE || 'ar-EG-SalmaNeural';
+  if (!key || !region) {
+    return response.status(503).json({ error: 'Azure Speech is not configured.' });
+  }
+
+  const escapedText = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+  const ssml = `<speak version="1.0" xml:lang="ar-EG"><voice name="${voice}">${escapedText}</voice></speak>`;
+
   try {
-    const urls = googleTTS.getAllAudioUrls(text, {
-      lang: 'ar',
-      slow: false,
-      host: 'https://translate.google.com',
-      splitPunct: '،,.؟?',
-    }).map(u => u.url);
+    const azureResponse = await fetch(
+      `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`,
+      {
+        method: 'POST',
+        headers: {
+          'Ocp-Apim-Subscription-Key': key,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+          'User-Agent': 'NOR-AI',
+        },
+        body: ssml,
+      },
+    );
+    if (!azureResponse.ok) {
+      throw new Error(`Azure Speech returned ${azureResponse.status}`);
+    }
+
+    const audio = Buffer.from(await azureResponse.arrayBuffer()).toString('base64');
+    if (!audio) throw new Error('Azure Speech returned empty audio');
 
     response.set('Cache-Control', 'no-store');
-    return response.json({ audio: urls });
+    return response.json({ audio: `data:audio/mpeg;base64,${audio}` });
   } catch (error) {
     console.error('Arabic TTS failed:', error);
     return response.status(502).json({ error: 'Arabic voice generation failed.' });

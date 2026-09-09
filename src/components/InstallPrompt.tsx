@@ -23,7 +23,7 @@ export const InstallPrompt: React.FC = () => {
 
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return sessionStorage.getItem('nor_pwa_dismissed_v2') === 'true';
+    return sessionStorage.getItem('nor_pwa_dismissed_v3') === 'true';
   });
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export const InstallPrompt: React.FC = () => {
 
   const handleDismiss = () => {
     setDismissed(true);
-    sessionStorage.setItem('nor_pwa_dismissed_v2', 'true');
+    sessionStorage.setItem('nor_pwa_dismissed_v3', 'true');
   };
 
   if (isStandalone || dismissed) return null;
@@ -85,7 +85,7 @@ export const InstallPrompt: React.FC = () => {
   return (
     <>
       {/* Floating Install Notification / Banner */}
-      <div className="fixed bottom-4 end-4 start-4 z-40 sm:bottom-6 sm:end-auto sm:start-8 sm:max-w-md">
+      <div className="fixed bottom-24 end-4 start-4 z-[999] sm:bottom-6 sm:end-auto sm:start-8 sm:max-w-md">
         <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/20 bg-[#0e0e0e]/95 p-3 shadow-2xl backdrop-blur-xl transition-all sm:gap-4 sm:p-4">
           <div className="flex items-center gap-3.5 min-w-0">
             <img
